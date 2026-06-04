@@ -13,9 +13,6 @@ make_numbat_heatmaps_old(
   extension = ""
 )
 }
-\arguments{
-\item{extension}{}
-}
 \description{
 Title
 }

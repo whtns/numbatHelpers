@@ -50,14 +50,7 @@ make_filtered_numbat_plots <- function(output_file, sample_id, myseus, mynbs, me
 
 
 #' Title
-#'
-#' @param numbat_rds_file
-#' @param cluster_dictionary
-#'
-#' @return
 #' @export
-#'
-#' @examples
 retrieve_numbat_seurat <- function(numbat_rds_file, cluster_dictionary) {
   #
   sample_id <- str_extract(numbat_rds_file, "SR[RX][0-9]+")
@@ -176,16 +169,7 @@ plot_study_cell_stats <- function(study_cell_stats, plot_path = tempfile(fileext
 }
 
 #' Title
-#'
-#' @param numbat_rds_file
-#' @param clone_comparisons
-#' @param cluster_dictionary annotated louvain clusters
-#' @param location in_segment or out_of_segment
-#'
-#' @return
 #' @export
-#'
-#' @examples
 plot_several_diffex_clones_in_phase <- function(enrichments, scna_of_interest = "2p", phase = "g1") {
   enrichment_plot <-
     enrichments |>

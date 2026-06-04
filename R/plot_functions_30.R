@@ -269,14 +269,7 @@ plot_mt_v_nUMI <- function(study_cell_stats, plot_path = tempfile(fileext = ".pd
 }
 
 #' Title
-#'
-#' @param seu
-#' @param checked_cluster_markers
-#'
-#' @return
 #' @export
-#'
-#' @examples
 plot_markers_by_cell_cycle <- plot_cluster_markers_by_cell_type <- function(seu, checked_cluster_markers) {
   cluster_plots <- map(checked_cluster_markers, ~ VlnPlot(seu, features = .x, group.by = "Phase"))
 

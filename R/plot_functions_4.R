@@ -33,11 +33,11 @@ make_numbat_heatmaps <- function(seu_path, numbat_rds_files, p_min = 0.9, line_w
   seu <- readRDS(seu_path)
   seu <- Seurat::RenameCells(seu, new.names = str_replace(colnames(seu), "\\.", "-"))
   mynb <- readRDS(numbat_rds_file)
-  retained_segs <- mynb$joint_post |> 
+  retained_segs <- mynb$joint_post |>
     dplyr::mutate(at_midline = dplyr::case_when(
       dplyr::between(p_cnv, 0.3, 0.7) ~ 1,
       .default = 0
-    )) |> 
+    )) |>
     group_by(seg) |>
     dplyr::summarise(percent_at_midline = sum(at_midline)/dplyr::n()) |>
     dplyr::filter(percent_at_midline <= midline_threshold) |>
@@ -45,20 +45,22 @@ make_numbat_heatmaps <- function(seu_path, numbat_rds_files, p_min = 0.9, line_w
     dplyr::pull(seg) |>
     identity()
   mynb$joint_post <- mynb$joint_post[mynb$joint_post$seg %in% retained_segs,]
-  myannot <- mynb$joint_post[, c("cell")]
+  myannot <- mynb$joint_post[, c("cell"), drop = FALSE]
   seu <- seu[, colnames(seu) %in% myannot$cell]
-  myannot <-
-    seu@meta.data %>%
-    tibble::rownames_to_column("cell") %>%
-    dplyr::select(cell, scna) %>%
-    identity()
-  myannot$scna[myannot$scna == ""] <- ".diploid"
-  clone_annot <-
-    seu@meta.data %>%
-    tibble::rownames_to_column("cell") %>%
+  myannot <- seu@meta.data %>%
+    tibble::rownames_to_column("cell")
+  if ("scna" %in% colnames(myannot)) {
+    myannot <- myannot %>% dplyr::select(cell, scna)
+    myannot$scna[myannot$scna == ""] <- ".diploid"
+  } else {
+    myannot <- myannot %>% dplyr::select(cell)
+    myannot$scna <- ".diploid"
+  }
+  clone_annot <- mynb$clone_post %>%
     dplyr::select(cell, clone_opt) %>%
-    identity()
-  numbat_heatmap <- safe_plot_numbat(
+    dplyr::distinct()
+  seu$clone_opt <- clone_annot$clone_opt[match(colnames(seu), clone_annot$cell)]
+  plot_result <- safe_plot_numbat(
     mynb,
     seu,
     clone_annot,
@@ -67,7 +69,11 @@ make_numbat_heatmaps <- function(seu_path, numbat_rds_files, p_min = 0.9, line_w
     p_min = p_min,
     line_width = line_width,
     show_segment_names_on_x = show_segment_names_on_x
-  )[["result"]]
+  )
+  if (!is.null(plot_result$error)) {
+    cat("WARNING: plot_numbat failed:", conditionMessage(plot_result$error), "\n")
+  }
+  numbat_heatmap <- plot_result[["result"]]
   if (!is.null(numbat_heatmap) && !identical(numbat_heatmap, NA_real_)) {
     heatmap_no_phylo_path <- tempfile(fileext = ".pdf")
     ggsave(heatmap_no_phylo_path, plot = numbat_heatmap, w = 10, h = 5)

@@ -387,18 +387,7 @@ make_volcano_plots <- function(myres, mysubtitle, sample_id, color_by_chrom = TR
 }
 
 #' Title
-#'
-#' @param numbat_rds_file
-#' @param p_min
-#' @param line_width
-#' @param filter_expressions
-#' @param cluster_dictionary
-#' @param extension
-#'
-#' @return
 #' @export
-#'
-#' @examples
 make_numbat_heatmaps_old <- function(numbat_rds_file, filter_expressions = NULL, cluster_dictionary, p_min = 0.9, line_width = 0.1, extension = ""){
   #
 

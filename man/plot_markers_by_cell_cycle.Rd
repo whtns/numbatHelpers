@@ -6,9 +6,6 @@
 \usage{
 plot_markers_by_cell_cycle(seu, checked_cluster_markers)
 }
-\arguments{
-\item{checked_cluster_markers}{}
-}
 \description{
 Title
 }

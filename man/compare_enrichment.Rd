@@ -6,9 +6,6 @@
 \usage{
 compare_enrichment(diffex, ...)
 }
-\arguments{
-\item{diffex}{}
-}
 \description{
 Title
 }

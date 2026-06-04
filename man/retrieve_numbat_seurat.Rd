@@ -6,9 +6,6 @@
 \usage{
 retrieve_numbat_seurat(numbat_rds_file, cluster_dictionary)
 }
-\arguments{
-\item{cluster_dictionary}{}
-}
 \description{
 Title
 }

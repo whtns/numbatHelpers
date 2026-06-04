@@ -7,6 +7,7 @@ Description: Plotting and analysis functions for numbat output
 License: MIT
 Imports:
     dplyr,
+    fs,
     glue,
     ggplot2,
     ggdendro,

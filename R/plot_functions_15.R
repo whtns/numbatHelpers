@@ -285,14 +285,7 @@ simplify_gt_col <- function(gt_val, scna_key) {
 }
 
 #' Make integrated numbat plots
-#'
-#' @param seu_path
-#' @param extension
-#'
-#' @return
 #' @export
-#'
-#' @examples
 make_integrated_numbat_plots <- function(seu_path, extension = "") {
   #
 

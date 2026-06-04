@@ -6,9 +6,6 @@
 \usage{
 make_integrated_numbat_plots(seu_path, extension = "")
 }
-\arguments{
-\item{extension}{}
-}
 \description{
 Make integrated numbat plots
 }

@@ -15,9 +15,6 @@ plot_distribution_of_clones_across_clusters(
   integrated = FALSE
 )
 }
-\arguments{
-\item{clusters}{}
-}
 \description{
 plot distribution of clones across clusters
 }

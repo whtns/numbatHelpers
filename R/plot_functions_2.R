@@ -1,13 +1,5 @@
 #' plot distribution of clones across clusters
-#'
-#' @param seu
-#' @param seu_name
-#' @param clusters
-#'
-#' @return
 #' @export
-#'
-#' @examples
 plot_distribution_of_clones_across_clusters <- function(seu, seu_name, var_x = "scna", var_y = "SCT_snn_res.0.6", plot_type = c("both", "clone", "cluster"), avg_line = NULL, signif = FALSE, integrated = FALSE) {
   plot_type <- match.arg(plot_type)
 

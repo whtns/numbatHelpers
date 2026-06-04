@@ -124,13 +124,7 @@ find_diffex_clusters_between_corresponding_states <- function(seu_path, correspo
 }
 
 #' Title
-#'
-#' @param diffex
-#'
-#' @return
 #' @export
-#'
-#' @examples
 compare_enrichment <- function(diffex, ...) {
   #
   enrich_diffex <- function(df) {

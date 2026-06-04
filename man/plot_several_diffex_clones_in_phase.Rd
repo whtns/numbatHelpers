@@ -10,11 +10,6 @@ plot_several_diffex_clones_in_phase(
   phase = "g1"
 )
 }
-\arguments{
-\item{cluster_dictionary}{annotated louvain clusters}
-
-\item{location}{in_segment or out_of_segment}
-}
 \description{
 Title
 }
