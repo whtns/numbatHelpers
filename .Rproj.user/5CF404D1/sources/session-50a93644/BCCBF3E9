@@ -1,0 +1,24 @@
+{
+    "id": "BCCBF3E9",
+    "path": "/project2/cobrinik_1090/rpkgs/numbat_helpers/R/metadata_functions_3.R",
+    "project_path": "R/metadata_functions_3.R",
+    "type": "r_source",
+    "hash": "0",
+    "contents": "",
+    "dirty": false,
+    "created": 1780608912091.0,
+    "source_on_save": false,
+    "relative_order": 5,
+    "properties": {
+        "source_window_id": "",
+        "Source": "Source"
+    },
+    "folds": "",
+    "lastKnownWriteTime": 1780608839,
+    "encoding": "UTF-8",
+    "collab_server": "",
+    "source_window": "",
+    "last_content_update": 1780608839,
+    "read_only": false,
+    "read_only_alternatives": []
+}
