@@ -25,7 +25,7 @@ plot_numbat <- function(nb, myseu, myannot, mytitle, sort_by = "clone_opt", show
     myannot$clone_opt <- as.character(myannot$clone_opt)
   }
   
-  all_clones <- na.omit(unique(c(as.character(myseu$clone_opt), as.character(nb$clone_post$clone_opt))))
+  all_clones <- na.omit(unique(c(as.character(myannot$clone_opt), as.character(nb$clone_post$clone_opt))))
   nclones <- max(as.integer(all_clones), na.rm = TRUE)
   clone_pal <- scales::hue_pal()(nclones) %>% set_names(as.character(1:nclones))
   myheatmap <- nb$plot_phylo_heatmap(
@@ -107,15 +107,13 @@ plot_numbat <- function(nb, myseu, myannot, mytitle, sort_by = "clone_opt", show
 #' @export
 plot_numbat_w_phylo <- function(nb, myseu, myannot, mytitle, show_segment_names_on_x = FALSE, ...) {
   
-  celltypes <- tibble::tibble(cell = gsub("\\.", "-", rownames(myseu@meta.data)), type = myseu@meta.data$type)
-  myannot <- dplyr::left_join(myannot, celltypes, by = "cell")
   if ("clone_opt" %in% colnames(nb$clone_post)) {
     nb$clone_post$clone_opt <- as.character(nb$clone_post$clone_opt)
   }
   if ("clone_opt" %in% colnames(myannot)) {
     myannot$clone_opt <- as.character(myannot$clone_opt)
   }
-  all_clones <- na.omit(unique(c(as.character(myseu$clone_opt), as.character(nb$clone_post$clone_opt))))
+  all_clones <- na.omit(unique(c(as.character(myannot$clone_opt), as.character(nb$clone_post$clone_opt))))
   nclones <- max(as.integer(all_clones), na.rm = TRUE)
   mypal <- scales::hue_pal()(nclones) %>% set_names(as.character(1:nclones))
   myheatmap <- nb$plot_phylo_heatmap(

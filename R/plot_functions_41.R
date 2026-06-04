@@ -292,6 +292,18 @@ simplify_gt <- function(mynb, rb_scnas = c("1" = "1q", "2" = "2p", "6" = "6p", "
   return(mynb)
 }
 
+#' @export
+retrieve_numbat_rds_files <- function(numbat_dir = "output/numbat_sridhar", kept_samples = NULL) {
+  numbat_rds_files <- fs::dir_ls(numbat_dir, regexp = ".*SR[RX][0-9]*_numbat.rds", recurse = TRUE) %>%
+    set_names(stringr::str_extract(., "SR[RX][0-9]+"))
+
+  if (!is.null(kept_samples)) {
+    numbat_rds_files <- numbat_rds_files[names(numbat_rds_files) %in% kept_samples]
+  }
+
+  return(numbat_rds_files)
+}
+
 seu_integrate_rbs <- function(numbat_dir = "output/numbat_sridhar", kept_samples = c("SRX11133594", "SRX11133593", "SRX11133592"), cluster_dictionary = cluster_dictionary) {
   numbat_rds_files <- retrieve_numbat_rds_files(numbat_dir, kept_samples)
 

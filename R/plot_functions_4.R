@@ -30,8 +30,6 @@ make_numbat_heatmaps <- function(seu_path, numbat_rds_files, p_min = 0.9, line_w
   numbat_dir <- basename(dirname(dirname(numbat_rds_file)))
   dir_create(glue("results/{numbat_dir}/"))
   dir_create(glue("results/{numbat_dir}/{sample_id}"))
-  seu <- readRDS(seu_path)
-  seu <- Seurat::RenameCells(seu, new.names = str_replace(colnames(seu), "\\.", "-"))
   mynb <- readRDS(numbat_rds_file)
   retained_segs <- mynb$joint_post |>
     dplyr::mutate(at_midline = dplyr::case_when(
@@ -45,24 +43,14 @@ make_numbat_heatmaps <- function(seu_path, numbat_rds_files, p_min = 0.9, line_w
     dplyr::pull(seg) |>
     identity()
   mynb$joint_post <- mynb$joint_post[mynb$joint_post$seg %in% retained_segs,]
-  myannot <- mynb$joint_post[, c("cell"), drop = FALSE]
-  seu <- seu[, colnames(seu) %in% myannot$cell]
-  myannot <- seu@meta.data %>%
-    tibble::rownames_to_column("cell")
-  if ("scna" %in% colnames(myannot)) {
-    myannot <- myannot %>% dplyr::select(cell, scna)
-    myannot$scna[myannot$scna == ""] <- ".diploid"
-  } else {
-    myannot <- myannot %>% dplyr::select(cell)
-    myannot$scna <- ".diploid"
-  }
+  retained_cells <- unique(mynb$joint_post$cell)
   clone_annot <- mynb$clone_post %>%
     dplyr::select(cell, clone_opt) %>%
-    dplyr::distinct()
-  seu$clone_opt <- clone_annot$clone_opt[match(colnames(seu), clone_annot$cell)]
+    dplyr::distinct() %>%
+    dplyr::filter(cell %in% retained_cells)
   plot_result <- safe_plot_numbat(
     mynb,
-    seu,
+    NULL,
     clone_annot,
     sample_id,
     clone_bar = FALSE,
@@ -93,7 +81,7 @@ make_numbat_heatmaps <- function(seu_path, numbat_rds_files, p_min = 0.9, line_w
   }
   numbat_heatmap_w_phylo <- safe_plot_numbat_w_phylo(
     mynb,
-    seu,
+    NULL,
     clone_annot,
     sample_id,
     clone_bar = FALSE,
