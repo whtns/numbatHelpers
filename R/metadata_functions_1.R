@@ -318,3 +318,41 @@ retrieve_current_param <- function(current_params, myparam) {
     purrr::map(myparam) |>
     purrr::set_names(sample_ids)
 }
+
+#' Save retained cell barcodes for a Seurat object to the database
+#'
+#' @param filepath Path to the saved Seurat RDS file (used as primary key)
+#' @param sample_id Sample identifier
+#' @param seu_type Label for the seu subset type (e.g. "filtered", "hypoxia_low")
+#' @param cells Character vector of retained cell barcodes
+#' @param sqlite_path Path to the SQLite database
+#' @return Invisibly returns filepath
+#' @export
+save_cell_barcodes_to_db <- function(filepath, sample_id, seu_type, cells, sqlite_path = "batch_hashes.sqlite") {
+  con <- DBI::dbConnect(RSQLite::SQLite(), sqlite_path)
+  on.exit(DBI::dbDisconnect(con), add = TRUE)
+  DBI::dbExecute(con, paste0(
+    "CREATE TABLE IF NOT EXISTS seu_cells ",
+    "(filepath TEXT PRIMARY KEY, sample_id TEXT, seu_type TEXT, cells TEXT)"
+  ))
+  DBI::dbExecute(con,
+    "INSERT OR REPLACE INTO seu_cells (filepath, sample_id, seu_type, cells) VALUES (?, ?, ?, ?)",
+    params = list(filepath, sample_id, seu_type, paste(cells, collapse = "\n"))
+  )
+  invisible(filepath)
+}
+
+#' Read retained cell barcodes for a Seurat object from the database
+#'
+#' @param filepath Path to the Seurat RDS file
+#' @param sqlite_path Path to the SQLite database
+#' @return Character vector of cell barcodes, or NULL if not found
+#' @export
+read_cell_barcodes_from_db <- function(filepath, sqlite_path = "batch_hashes.sqlite") {
+  con <- DBI::dbConnect(RSQLite::SQLite(), sqlite_path)
+  on.exit(DBI::dbDisconnect(con), add = TRUE)
+  if (!DBI::dbExistsTable(con, "seu_cells")) return(NULL)
+  result <- DBI::dbGetQuery(con, "SELECT cells FROM seu_cells WHERE filepath = ?", params = list(filepath))
+  if (nrow(result) == 0 || is.na(result$cells[[1]])) return(NULL)
+  strsplit(result$cells[[1]], "\n")[[1]]
+}

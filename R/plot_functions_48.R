@@ -34,9 +34,9 @@ save_cc_space_plot_from_path <- function(seu_path, clone_simplifications, label 
 #' @param ... Additional arguments passed to other functions
 #' @return ggplot2 plot object
 #' @export
-plot_clone_tree <- function(seu, tumor_id, nb_path, clone_simplifications = NULL, sample_id = NULL, show_distance = FALSE, ...) {
-  if (!"clone_opt" %in% colnames(seu@meta.data)) {
-    warning("clone_opt not found in Seurat object for ", tumor_id, "; skipping clone tree")
+plot_clone_tree <- function(clone_df, tumor_id, nb_path, clone_simplifications = NULL, sample_id = NULL, show_distance = FALSE, ...) {
+  if (!"clone_opt" %in% colnames(clone_df)) {
+    warning("clone_opt not found for ", tumor_id, "; skipping clone tree")
     return(NULL)
   }
 
@@ -46,13 +46,11 @@ plot_clone_tree <- function(seu, tumor_id, nb_path, clone_simplifications = NULL
     mynb$mut_graph |>
     tidygraph::as_tbl_graph() %>%
     tidygraph::activate(nodes) %>%
-    dplyr::filter(clone %in% unique(seu$clone_opt)) %>%
+    dplyr::filter(clone %in% unique(clone_df$clone_opt)) %>%
     as.igraph() %>%
     identity()
 
-  mynb$clone_post <- dplyr::filter(mynb$clone_post, cell %in% colnames(seu))
-
-  # mynb$mut_graph <- induced_subgraph(mynb$mut_graph, retained_vertices)
+  mynb$clone_post <- dplyr::filter(mynb$clone_post, cell %in% clone_df$cell)
 
   ## clone tree ------------------------------
 
@@ -71,9 +69,9 @@ plot_clone_tree <- function(seu, tumor_id, nb_path, clone_simplifications = NULL
   igraph::V(mynb$mut_graph)$clone <- as.integer(remap[as.character(igraph::V(mynb$mut_graph)$clone)])
   mynb$clone_post <- mynb$clone_post %>%
     dplyr::mutate(clone_opt = as.integer(remap[as.character(clone_opt)]))
-  seu$clone_opt <- as.integer(remap[as.character(seu$clone_opt)])
+  clone_df$clone_opt <- as.integer(remap[as.character(clone_df$clone_opt)])
 
-  nclones <- max(as.integer(unique(seu$clone_opt)), na.rm = TRUE)
+  nclones <- max(as.integer(unique(clone_df$clone_opt)), na.rm = TRUE)
   mypal <- scales::hue_pal()(nclones) %>%
     set_names(1:nclones)
 

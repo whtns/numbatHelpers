@@ -652,6 +652,8 @@ run_hypoxia_clustering = FALSE, cluster_resolutions = seq(0.2, 1, by = 0.2), ass
 
   new_filepath <- str_replace(seu_path, "_seu.*.rds", paste0("_", slug, "_seu.rds"))
   add_hash_metadata(new_filepath, seu = seu)
+  sample_id <- stringr::str_extract(new_filepath, "SR[RX][0-9]+")
+  save_cell_barcodes_to_db(new_filepath, sample_id, slug, colnames(seu))
   return(new_filepath)
 }
 

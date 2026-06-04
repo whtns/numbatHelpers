@@ -192,6 +192,7 @@ filter_cluster_save_seu <- function(numbat_rds_file, seus, cluster_dictionary, l
       cached_seu <- Seurat::AddMetaData(cached_seu, refresh_meta)
       Project(cached_seu) <- sample_id
       add_hash_metadata(seu = cached_seu, filepath = filtered_seu_path)
+      save_cell_barcodes_to_db(filtered_seu_path, sample_id, "filtered", colnames(cached_seu))
       cell_type_meta <- cached_seu@meta.data
       plot_filtering_timeline(all_cells_meta, scna_meta, qc_meta, cell_type_meta, sample_id)
       ggsave(glue("results/{sample_id}_filtering_timeline_{extension}.pdf"), width = 8, height = 4)
@@ -222,6 +223,7 @@ filter_cluster_save_seu <- function(numbat_rds_file, seus, cluster_dictionary, l
   )
   Project(seu) <- sample_id
   add_hash_metadata(seu = seu, filepath = filtered_seu_path)
+  save_cell_barcodes_to_db(filtered_seu_path, sample_id, "filtered", colnames(seu))
 
   cell_type_meta <- seu@meta.data
   plot_filtering_timeline(all_cells_meta, scna_meta, qc_meta, cell_type_meta, sample_id)

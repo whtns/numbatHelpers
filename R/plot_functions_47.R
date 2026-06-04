@@ -94,17 +94,27 @@ summarize_clusters <- function(df) {
 #' @export
 plot_clone_tree_from_path <- function(seu_path, nb_paths, clone_simplifications, label = "_clone_tree", ...) {
 
-
-  seu <- readRDS(seu_path)
   tumor_id <- str_extract(seu_path, "SR[RX][0-9]+")
-  sample_id <- str_remove(fs::path_file(seu_path), "_filtered_seu.*")
+  sample_id <- str_remove(fs::path_file(seu_path), "_filtered_seu.*|_unfiltered_seu.*|_seu\\.rds$")
 
   nb_paths <- nb_paths %>%
     set_names(str_extract(., "SR[RX][0-9]+"))
 
   nb_path <- nb_paths[[tumor_id]]
 
-  clone_tree <- plot_clone_tree(seu, tumor_id = tumor_id, nb_path, clone_simplifications, sample_id = sample_id, ...)
+  mynb <- readRDS(nb_path)
+  all_clone_df <- mynb$clone_post %>%
+    dplyr::select(cell, clone_opt) %>%
+    dplyr::distinct()
+
+  retained_cells <- read_cell_barcodes_from_db(seu_path)
+  clone_df <- if (!is.null(retained_cells)) {
+    dplyr::filter(all_clone_df, cell %in% retained_cells)
+  } else {
+    all_clone_df
+  }
+
+  clone_tree <- plot_clone_tree(clone_df, tumor_id = tumor_id, nb_path, clone_simplifications, sample_id = sample_id, ...)
 
   return(clone_tree)
 }
@@ -120,21 +130,41 @@ plot_clone_tree_from_path <- function(seu_path, nb_paths, clone_simplifications,
 #' @export
 save_clone_tree_from_path <- function(seu_path, nb_paths, clone_simplifications, label = "_clone_tree", ...) {
 
-  # Handle NA inputs (e.g., when clone_post is NULL for a sample)
   if (is.na(seu_path)) {
     return(NA_character_)
   }
 
-  seu <- readRDS(seu_path)
   tumor_id <- str_extract(seu_path, "SR[RX][0-9]+")
-  sample_id <- str_remove(fs::path_file(seu_path), "_filtered_seu.*")
+  sample_id <- str_remove(fs::path_file(seu_path), "_filtered_seu.*|_unfiltered_seu.*|_seu\\.rds$")
 
   nb_paths <- nb_paths %>%
     set_names(str_extract(., "SR[RX][0-9]+"))
 
   nb_path <- nb_paths[[tumor_id]]
 
-  p <- plot_clone_tree(seu, tumor_id = tumor_id, nb_path, clone_simplifications, sample_id = sample_id, ...)
+  if (is.null(nb_path) || is.na(nb_path)) {
+    warning("No numbat RDS found for ", tumor_id, "; skipping clone tree")
+    return(NA_character_)
+  }
+
+  mynb <- readRDS(nb_path)
+  all_clone_df <- mynb$clone_post %>%
+    dplyr::select(cell, clone_opt) %>%
+    dplyr::distinct()
+
+  if (is.null(all_clone_df) || nrow(all_clone_df) == 0) {
+    warning("No clone_post data for ", tumor_id, "; skipping clone tree")
+    return(NA_character_)
+  }
+
+  retained_cells <- read_cell_barcodes_from_db(seu_path)
+  clone_df <- if (!is.null(retained_cells)) {
+    dplyr::filter(all_clone_df, cell %in% retained_cells)
+  } else {
+    all_clone_df
+  }
+
+  p <- plot_clone_tree(clone_df, tumor_id = tumor_id, nb_path, clone_simplifications, sample_id = sample_id, ...)
 
   plot_path <- ggsave(glue("results/{sample_id}{label}.pdf"), plot = p, width = 4, height = 4)
   return(plot_path)
