@@ -56,6 +56,97 @@ make_annoHighlight_from_consensus <- function(ideogramPlot, ploty, chrom, chroms
 #' @param suffix Optional suffix inserted before the karyogram filename stem
 #' @return ggplot2 plot object
 #' @export
+#' Generate ideograms for multiple suffixes from a single RDS load
+#'
+#' @param nb_path Numbat RDS file path
+#' @param suffixes Named character vector mapping result names to filename suffixes
+#' @param midline_threshold Threshold for midline filtering
+#' @param filter_midline Whether to apply midline segment filtering
+#' @return Named list: one list(plot=path, table=seg_table) per suffix
+#' @export
+make_rb_scna_ideograms_multi <- function(nb_path,
+                                         suffixes = c(unfiltered = "", filtered = "_subset", low_hypoxia = "_low_hypoxia"),
+                                         midline_threshold = 0.4,
+                                         filter_midline = FALSE) {
+	chrom_lengths <- seqlengths(TxDb.Hsapiens.UCSC.hg38.knownGene)
+	maxChromSize <- max(chrom_lengths)
+	hg38_assembly <- assembly("hg38")
+	tumor_id <- str_extract(nb_path, "SR[RX][0-9]+")
+	dir.create("results/karyograms", showWarnings = FALSE, recursive = TRUE)
+
+	mynb <- readRDS(nb_path)
+
+	if (filter_midline) {
+		retained_segs <- mynb$joint_post |>
+			dplyr::mutate(at_midline = dplyr::case_when(
+				dplyr::between(p_cnv, 0.3, 0.7) ~ 1,
+				.default = 0
+			)) |>
+			group_by(seg) |>
+			dplyr::summarise(percent_at_midline = sum(at_midline)/dplyr::n()) |>
+			dplyr::filter(percent_at_midline <= midline_threshold) |>
+			dplyr::arrange(desc(percent_at_midline)) |>
+			dplyr::pull(seg)
+	} else {
+		retained_segs <- unique(mynb$joint_post$seg)
+	}
+
+	segmentation_table <- mynb$joint_post |>
+		dplyr::filter(seg %in% retained_segs) |>
+		dplyr::filter(p_cnv > 0.9) |>
+		dplyr::distinct(CHROM, seg, cnv_state, .keep_all = TRUE) |>
+		dplyr::mutate(CHROM = paste0("chr", CHROM)) |>
+		dplyr::filter(!is.na(seg)) |>
+		dplyr::mutate(fill = dplyr::case_when(cnv_state == "amp" ~ "red",
+		                                      cnv_state == "bamp" ~ "pink",
+		                                      cnv_state == "del" ~ "blue",
+		                                      cnv_state == "loh" ~ "green")) |>
+		dplyr::rename(chrom = CHROM, chromstart = seg_start, chromend = seg_end) |>
+		dplyr::mutate(width = chromend - chromstart) |>
+		dplyr::select(chrom, chromstart, chromend, fill, width, cnv_state) |>
+		dplyr::mutate(chrom = factor(chrom, levels = paste0("chr", seq(1, 22)))) |>
+		dplyr::arrange(chrom, chromstart)
+
+	pg_width <- 4.25
+	pg_height <- 8.85
+	primary_suffix <- suffixes[[1]]
+	primary_path <- glue("results/karyograms/{tumor_id}{primary_suffix}_karyogram.pdf")
+
+	pdf(primary_path, width = pg_width, height = pg_height)
+	pageCreate(width = pg_width, height = pg_height, default.units = "inches",
+	           showGuides = FALSE, xgrid = 0, ygrid = 0)
+	plotText(label = tumor_id, x = 1, y = 0.25, fontsize = 18)
+	plotLegend(legend = c("gain", "balanced gain", "loss", "cnloh"),
+	           fill = c("red", "pink", "blue", "green"),
+	           border = FALSE, x = 0.1, y = 0.3,
+	           width = pg_width - 1, height = 0.7, fontsize = 12,
+	           orientation = "h", just = c("left", "top"), default.units = "inches")
+
+	yCoord <- 1
+	for (chr in paste0("chr", seq(1, 22))) {
+		width <- (4 * chrom_lengths[[chr]]) / maxChromSize
+		ideogramPlot <- plotIdeogram(chrom = chr, assembly = hg38_assembly,
+		                             orientation = "h", x = 0.15, y = yCoord,
+		                             height = 0.2, width = width, just = "left")
+		plotText(label = gsub("chr", "", chr), x = 0.05, y = yCoord, fontsize = 10, rot = 90)
+		if (chr %in% segmentation_table$chrom) {
+			segmentation_table |>
+				dplyr::filter(chrom %in% chr) |>
+				pmap(~make_annoHighlight_from_consensus(ideogramPlot, yCoord, ..1, ..2, ..3, ..4, ..5, pg_width))
+		}
+		yCoord <- yCoord + 0.35
+	}
+	dev.off()
+
+	# Copy the generated PDF to each additional suffix path (content is identical)
+	result <- purrr::imap(suffixes, function(suffix, name) {
+		dest_path <- glue("results/karyograms/{tumor_id}{suffix}_karyogram.pdf")
+		if (dest_path != primary_path) file.copy(primary_path, dest_path, overwrite = TRUE)
+		list("plot" = dest_path, "table" = segmentation_table)
+	})
+	result
+}
+
 make_rb_scna_ideograms <- function(nb_path, midline_threshold = 0.4, suffix = "", filter_midline = TRUE) {
 
 	chrom_lengths = seqlengths(TxDb.Hsapiens.UCSC.hg38.knownGene)
