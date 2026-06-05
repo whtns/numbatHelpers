@@ -99,7 +99,14 @@ plot_variability_at_SCNA <- function(phylo_plot_output, chrom = "1", p_min = 0.9
 #' @return Character vector with plot paths
 #' @export
 make_numbat_heatmaps <- function(seu, numbat_rds_files, p_min = 0.9, line_width = 0.1, extension = "", midline_threshold = 0.4, show_segment_names_on_x = FALSE, numbat_rds_filtered_files = NULL, filter_midline = TRUE) {
-  sample_id <- stringr::str_extract(colnames(seu)[1], "SRX[0-9]+")
+  # seu may be a Seurat object, a file path, or a list containing a path
+  if (!inherits(seu, "Seurat")) {
+    seu_path <- unlist(seu, use.names = FALSE)[1]
+    sample_id <- stringr::str_extract(seu_path, "SRX[0-9]+")
+    seu <- readRDS(seu_path)
+  } else {
+    sample_id <- stringr::str_extract(colnames(seu)[1], "SRX[0-9]+")
+  }
   names(numbat_rds_files) <- stringr::str_extract(numbat_rds_files, "SRX[0-9]+")
   if (!is.null(numbat_rds_filtered_files) && length(numbat_rds_filtered_files) > 0) {
     names(numbat_rds_filtered_files) <- stringr::str_extract(numbat_rds_filtered_files, "SRX[0-9]+")
