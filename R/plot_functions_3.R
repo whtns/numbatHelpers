@@ -99,7 +99,7 @@ annotate_filter_reason <- function(
 }
 
 filter_cluster_save_seu <- function(numbat_rds_file, seus, cluster_dictionary, large_clone_simplifications, filter_expressions = NULL, cells_to_remove, extension = "", leiden_cluster_file = "results/adata_filtered_metadata_0.25.csv", ...) {
-  
+  options(future.globals.maxSize = Inf)
   sample_id <- str_extract(numbat_rds_file, "SR[RX][0-9]+")
   numbat_dir <- fs::path_split(numbat_rds_file)[[1]][[2]]
   dir_create(glue("results/{numbat_dir}"))
