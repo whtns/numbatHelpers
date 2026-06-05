@@ -56,34 +56,36 @@ make_annoHighlight_from_consensus <- function(ideogramPlot, ploty, chrom, chroms
 #' @param suffix Optional suffix inserted before the karyogram filename stem
 #' @return ggplot2 plot object
 #' @export
-make_rb_scna_ideograms <- function(nb_path, midline_threshold = 0.4, suffix = "") {
-	
+make_rb_scna_ideograms <- function(nb_path, midline_threshold = 0.4, suffix = "", filter_midline = TRUE) {
+
 	chrom_lengths = seqlengths(TxDb.Hsapiens.UCSC.hg38.knownGene)
 	maxChromSize <- max(chrom_lengths)
-	
+
 	tumor_id <- str_extract(nb_path, "SR[RX][0-9]+")
-	
+
 	dir.create("results/karyograms", showWarnings = FALSE, recursive = TRUE)
 	plot_path <- glue("results/karyograms/{tumor_id}{suffix}_karyogram.pdf")
 
 	mynb <- readRDS(nb_path)
-	
-	# select segments by coefficient of variation
-	retained_segs <- mynb$joint_post |> 
-		dplyr::mutate(at_midline = dplyr::case_when(
-			dplyr::between(p_cnv, 0.3, 0.7) ~ 1,
-			.default = 0
-		)) |> 
-		group_by(seg) |>
-		dplyr::summarise(percent_at_midline = sum(at_midline)/dplyr::n()) |>
-		dplyr::filter(percent_at_midline <= midline_threshold) |>
-		dplyr::arrange(desc(percent_at_midline)) |>
-		dplyr::pull(seg) |>
-		# print(n = 40) |>
-		identity()
-	
-	segmentation_table <- mynb$joint_post |> 
-		dplyr::filter(seg %in% retained_segs) |> 
+
+	if (filter_midline) {
+		retained_segs <- mynb$joint_post |>
+			dplyr::mutate(at_midline = dplyr::case_when(
+				dplyr::between(p_cnv, 0.3, 0.7) ~ 1,
+				.default = 0
+			)) |>
+			group_by(seg) |>
+			dplyr::summarise(percent_at_midline = sum(at_midline)/dplyr::n()) |>
+			dplyr::filter(percent_at_midline <= midline_threshold) |>
+			dplyr::arrange(desc(percent_at_midline)) |>
+			dplyr::pull(seg) |>
+			identity()
+	} else {
+		retained_segs <- unique(mynb$joint_post$seg)
+	}
+
+	segmentation_table <- mynb$joint_post |>
+		dplyr::filter(seg %in% retained_segs) |>
 		dplyr::filter(p_cnv > 0.9) |> 
 		dplyr::distinct(CHROM, seg, cnv_state, .keep_all = TRUE) |> 
 		dplyr::mutate(CHROM= paste0("chr", CHROM)) |> 
