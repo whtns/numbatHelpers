@@ -54,9 +54,16 @@ plot_clone_tree <- function(clone_df, tumor_id, nb_path, clone_simplifications =
 
   ## clone tree ------------------------------
 
-  if(!is.null(clone_simplifications)){
-  	rb_scnas <- clone_simplifications[[tumor_id]]
-  	mynb <- simplify_gt(mynb, rb_scnas)
+  if (!is.null(clone_simplifications)) {
+    # Support both whole-dict (keyed by tumor_id) and already-extracted per-sample form
+    rb_scnas <- if (tumor_id %in% names(clone_simplifications)) {
+      clone_simplifications[[tumor_id]]
+    } else {
+      clone_simplifications
+    }
+    if (!is.null(rb_scnas) && length(rb_scnas) > 0) {
+      mynb <- simplify_gt(mynb, rb_scnas)
+    }
   }
 
   # Renumber clones in BFS tree order so clone numbers follow phylogenetic order

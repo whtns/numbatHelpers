@@ -356,3 +356,61 @@ read_cell_barcodes_from_db <- function(filepath, sqlite_path = "batch_hashes.sql
   if (nrow(result) == 0 || is.na(result$cells[[1]])) return(NULL)
   strsplit(result$cells[[1]], "\n")[[1]]
 }
+
+#' Compute clone simplifications from a numbat RDS file
+#'
+#' Derives a named list mapping SCNA labels (e.g. "1q+", "16q-") to primary
+#' segment names by reading segs_consensus from the numbat object and
+#' classifying each non-neutral segment by chromosomal arm (p = before
+#' centromere, q = after) using hg38 centromere midpoints.
+#'
+#' When multiple segments share the same SCNA label, the alphabetically first
+#' segment name is chosen as the primary representative.
+#'
+#' @param numbat_rds_path Path to a numbat RDS file
+#' @return Named list of SCNA_label -> segment_name, or an empty list if no
+#'   non-neutral segments are found
+#' @export
+compute_clone_simplifications <- function(numbat_rds_path) {
+  # hg38 centromere midpoints in bp (approximate, from UCSC genome browser)
+  centromeres_bp <- c(
+    "1" = 123500000L, "2" = 93100000L,  "3" = 92200000L,  "4" = 50700000L,
+    "5" = 48300000L,  "6" = 59200000L,  "7" = 59800000L,  "8" = 45000000L,
+    "9" = 44400000L,  "10"= 40600000L,  "11"= 52700000L,  "12"= 35600000L,
+    "13"= 17000000L,  "14"= 17100000L,  "15"= 18400000L,  "16"= 37300000L,
+    "17"= 24900000L,  "18"= 18200000L,  "19"= 25900000L,  "20"= 28200000L,
+    "21"= 11900000L,  "22"= 14000000L
+  )
+
+  mynb <- readRDS(numbat_rds_path)
+  sc <- as.data.frame(mynb$segs_consensus)
+
+  non_neu <- sc[sc$cnv_state != "neu", , drop = FALSE]
+  if (nrow(non_neu) == 0) return(list())
+
+  chrom_str <- as.character(non_neu$CHROM)
+  midpoint  <- (non_neu$seg_start + non_neu$seg_end) / 2
+
+  arm <- mapply(function(chr, mid) {
+    if (!chr %in% names(centromeres_bp)) return("?")
+    if (mid < centromeres_bp[[chr]]) "p" else "q"
+  }, chrom_str, midpoint, USE.NAMES = FALSE)
+
+  suffix <- dplyr::case_when(
+    non_neu$cnv_state %in% c("amp",  "bamp") ~ "+",
+    non_neu$cnv_state %in% c("del",  "bdel") ~ "-",
+    non_neu$cnv_state %in% c("loh", "cnloh") ~ "cnloh",
+    TRUE ~ non_neu$cnv_state
+  )
+
+  non_neu$scna_label <- paste0(chrom_str, arm, suffix)
+  non_neu$arm <- arm
+
+  # One representative segment per SCNA label: alphabetically first
+  result <- non_neu[order(non_neu$scna_label, non_neu$seg), ]
+  result <- result[!duplicated(result$scna_label), ]
+
+  out <- as.list(result$seg)
+  names(out) <- result$scna_label
+  out
+}
