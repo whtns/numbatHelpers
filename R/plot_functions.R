@@ -98,7 +98,7 @@ plot_variability_at_SCNA <- function(phylo_plot_output, chrom = "1", p_min = 0.9
 #'
 #' @return Character vector with plot paths
 #' @export
-make_numbat_heatmaps <- function(seu, numbat_rds_files, p_min = 0.9, line_width = 0.1, extension = "", midline_threshold = 0.4, show_segment_names_on_x = FALSE, numbat_rds_filtered_files = NULL) {
+make_numbat_heatmaps <- function(seu, numbat_rds_files, p_min = 0.9, line_width = 0.1, extension = "", midline_threshold = 0.4, show_segment_names_on_x = FALSE, numbat_rds_filtered_files = NULL, filter_midline = TRUE) {
   sample_id <- stringr::str_extract(colnames(seu)[1], "SRX[0-9]+")
   names(numbat_rds_files) <- stringr::str_extract(numbat_rds_files, "SRX[0-9]+")
   if (!is.null(numbat_rds_filtered_files) && length(numbat_rds_filtered_files) > 0) {
@@ -118,18 +118,20 @@ make_numbat_heatmaps <- function(seu, numbat_rds_files, p_min = 0.9, line_width 
 
   seu <- Seurat::RenameCells(seu, new.names = stringr::str_replace(colnames(seu), "\\.", "-"))
   mynb <- readRDS(numbat_rds_file)
-  retained_segs <- mynb$joint_post |>
-    dplyr::mutate(at_midline = dplyr::case_when(
-      dplyr::between(p_cnv, 0.3, 0.7) ~ 1,
-      .default = 0
-    )) |>
-    dplyr::group_by(seg) |>
-    dplyr::summarise(percent_at_midline = sum(at_midline)/dplyr::n()) |>
-    dplyr::filter(percent_at_midline <= midline_threshold) |>
-    dplyr::arrange(dplyr::desc(percent_at_midline)) |>
-    dplyr::pull(seg) |>
-    identity()
-  mynb$joint_post <- mynb$joint_post[mynb$joint_post$seg %in% retained_segs,]
+  if (filter_midline) {
+    retained_segs <- mynb$joint_post |>
+      dplyr::mutate(at_midline = dplyr::case_when(
+        dplyr::between(p_cnv, 0.3, 0.7) ~ 1,
+        .default = 0
+      )) |>
+      dplyr::group_by(seg) |>
+      dplyr::summarise(percent_at_midline = sum(at_midline)/dplyr::n()) |>
+      dplyr::filter(percent_at_midline <= midline_threshold) |>
+      dplyr::arrange(dplyr::desc(percent_at_midline)) |>
+      dplyr::pull(seg) |>
+      identity()
+    mynb$joint_post <- mynb$joint_post[mynb$joint_post$seg %in% retained_segs,]
+  }
   cell_names <- mynb$joint_post$cell
   seu <- seu[, colnames(seu) %in% cell_names]
   myannot <- seu@meta.data %>%
