@@ -518,24 +518,28 @@ plot_effect_of_filtering <- function(unfiltered_seu_path, filtered_seu_path = NU
     hide_technical = "all", num_markers = 5)
   gc()
 
-  # include low hypoxia seus if available
-  p_low_hypoxia <- NULL
+  # Load hypoxia seus once here — reused for both marker plots and dimplots below
+  low_hypoxia_seu <- NULL
   if (!is.null(low_hypoxia_seu_path) && file.exists(low_hypoxia_seu_path)) {
     low_hypoxia_seu <- tryCatch(readRDS(low_hypoxia_seu_path), error = function(e) NULL)
-    if (!is.null(low_hypoxia_seu)) {
-      p_low_hypoxia <- safe_plot_markers(low_hypoxia_seu, marker_method = "wilcox", return_plotly = FALSE, hide_technical = "all", num_markers = 5)
-      gc()
-    }
+  }
+  high_hypoxia_seu <- NULL
+  if (!is.null(high_hypoxia_seu_path) && file.exists(high_hypoxia_seu_path)) {
+    high_hypoxia_seu <- tryCatch(readRDS(high_hypoxia_seu_path), error = function(e) NULL)
+  }
+
+  # include low hypoxia seus if available
+  p_low_hypoxia <- NULL
+  if (!is.null(low_hypoxia_seu)) {
+    p_low_hypoxia <- safe_plot_markers(low_hypoxia_seu, marker_method = "wilcox", return_plotly = FALSE, hide_technical = "all", num_markers = 5)
+    gc()
   }
 
   # include high hypoxia seus if available
   p_high_hypoxia <- NULL
-  if (!is.null(high_hypoxia_seu_path) && file.exists(high_hypoxia_seu_path)) {
-    high_hypoxia_seu <- tryCatch(readRDS(high_hypoxia_seu_path), error = function(e) NULL)
-    if (!is.null(high_hypoxia_seu)) {
-      p_high_hypoxia <- safe_plot_markers(high_hypoxia_seu, marker_method = "wilcox", return_plotly = FALSE, hide_technical = "all", num_markers = 5)
-      gc()
-    }
+  if (!is.null(high_hypoxia_seu)) {
+    p_high_hypoxia <- safe_plot_markers(high_hypoxia_seu, marker_method = "wilcox", return_plotly = FALSE, hide_technical = "all", num_markers = 5)
+    gc()
   }
 
   cat("DEBUG: p_unfiltered is NULL?", is.null(p_unfiltered), "\n")
@@ -678,13 +682,14 @@ plot_effect_of_filtering <- function(unfiltered_seu_path, filtered_seu_path = NU
   tmp_path <- tempfile(fileext = ".pdf")
   plot_list["abbreviation_umaps"] <- tmp_path
   ggsave(tmp_path, dimplot_grid, height = 6, width = 4.5 * n_cols)
+  rm(unfiltered_seu, filtered_seu); gc()
 
   # hypoxia filtering dimplots ------------------------------
   # Show which cells are dropped between filtered_seu and seus_low_hypoxia.
   # Uses original_filtered_seu (pipeline seu with UMAP) as the "before" object.
-  if (!is.null(low_hypoxia_seu_path) && file.exists(low_hypoxia_seu_path)) {
-    low_hypoxia_seu <- tryCatch(readRDS(low_hypoxia_seu_path), error = function(e) NULL)
-    if (!is.null(low_hypoxia_seu)) {
+  # low_hypoxia_seu already loaded above — no second readRDS needed.
+  if (!is.null(low_hypoxia_seu)) {
+    {
       source_seu <- if (!is.null(original_filtered_seu)) original_filtered_seu else filtered_seu
       kept_barcodes <- colnames(low_hypoxia_seu)
       source_seu@meta.data$hypoxia_filter_label <- ifelse(
@@ -733,11 +738,12 @@ plot_effect_of_filtering <- function(unfiltered_seu_path, filtered_seu_path = NU
       if (hyp_ok) plot_list["hypoxia_filtering_dimplots"] <- tmp_path
     }
   }
+  rm(low_hypoxia_seu); gc()
 
   # high hypoxia filtering dimplots ------------------------------
-  if (!is.null(high_hypoxia_seu_path) && file.exists(high_hypoxia_seu_path)) {
-    high_hypoxia_seu <- tryCatch(readRDS(high_hypoxia_seu_path), error = function(e) NULL)
-    if (!is.null(high_hypoxia_seu)) {
+  # high_hypoxia_seu already loaded above — no second readRDS needed.
+  if (!is.null(high_hypoxia_seu)) {
+    {
       source_seu <- if (!is.null(original_filtered_seu)) original_filtered_seu else filtered_seu
       kept_barcodes <- colnames(high_hypoxia_seu)
       source_seu@meta.data$hypoxia_filter_label <- ifelse(
@@ -786,6 +792,7 @@ plot_effect_of_filtering <- function(unfiltered_seu_path, filtered_seu_path = NU
       if (hyp_ok_hh) plot_list["high_hypoxia_filtering_dimplots"] <- tmp_path
     }
   }
+  rm(high_hypoxia_seu, original_filtered_seu); gc()
 
   # marker heatmaps at gene_snn_res.0.2 for available inputs ------------------
   maybe_heatmap_file <- function(seu_path, label) {
