@@ -105,19 +105,20 @@ make_rb_scna_ideograms <- function(nb_path, midline_threshold = 0.4, suffix = ""
 	
 	pg_width = 4.25
 	pg_height = 8.85
+	hg38_assembly <- assembly("hg38")
 	pdf(plot_path, width = pg_width, height = pg_height)
-	
+
 	pageCreate(
 		width = pg_width, height = pg_height, default.units = "inches",
 		showGuides = FALSE, xgrid = 0, ygrid = 0
 	)
-	
+
 	plotText(
-		label = tumor_id, 
+		label = tumor_id,
 		x = 1, y = 0.25,
 		fontsize = 18
 	)
-	
+
 	legendPlot <- plotLegend(
 		legend = c("gain", "balanced gain", "loss", "cnloh"),
 		fill = c("red", "pink", "blue", "green"),
@@ -128,12 +129,12 @@ make_rb_scna_ideograms <- function(nb_path, midline_threshold = 0.4, suffix = ""
 		just = c("left", "top"),
 		default.units = "inches"
 	)
-	
+
 	yCoord <- 1
 	for (chr in c(paste0("chr", seq(1,22)))) {
 		width <- (4 * chrom_lengths[[chr]]) / maxChromSize
 		ideogramPlot <- plotIdeogram(
-			chrom = chr, assembly = "hg38",
+			chrom = chr, assembly = hg38_assembly,
 			orientation = "h",
 			x = 0.15, y = yCoord,
 			height = 0.2, width = width,
@@ -143,14 +144,13 @@ make_rb_scna_ideograms <- function(nb_path, midline_threshold = 0.4, suffix = ""
 			label = gsub("chr", "", chr),
 			x = 0.05, y = yCoord, fontsize = 10, rot = 90
 		)
-		
-		if(chr %in% segmentation_table$chrom){
-			print("yes")
+
+		if (chr %in% segmentation_table$chrom) {
 			segmentation_table |>
 				dplyr::filter(chrom %in% chr) |>
 				pmap(~make_annoHighlight_from_consensus(ideogramPlot, yCoord, ..1, ..2, ..3, ..4, ..5, pg_width))
 		}
-		
+
 		yCoord <- yCoord + 0.35
 	}
 	
