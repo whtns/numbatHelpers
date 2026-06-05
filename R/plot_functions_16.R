@@ -63,8 +63,9 @@ make_rb_scna_ideograms <- function(nb_path, midline_threshold = 0.4, suffix = ""
 	
 	tumor_id <- str_extract(nb_path, "SR[RX][0-9]+")
 	
-	plot_path <- glue("results/{tumor_id}{suffix}_karyogram.pdf")
-	
+	dir.create("results/karyograms", showWarnings = FALSE, recursive = TRUE)
+	plot_path <- glue("results/karyograms/{tumor_id}{suffix}_karyogram.pdf")
+
 	mynb <- readRDS(nb_path)
 	
 	# select segments by coefficient of variation

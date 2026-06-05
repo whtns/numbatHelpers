@@ -166,7 +166,8 @@ save_clone_tree_from_path <- function(seu_path, nb_paths, clone_simplifications,
 
   p <- plot_clone_tree(clone_df, tumor_id = tumor_id, nb_path, clone_simplifications, sample_id = sample_id, ...)
 
-  plot_path <- ggsave(glue("results/{sample_id}{label}.pdf"), plot = p, width = 4, height = 4)
+  dir.create("results/clone_trees", showWarnings = FALSE, recursive = TRUE)
+  plot_path <- ggsave(glue("results/clone_trees/{sample_id}{label}.pdf"), plot = p, width = 4, height = 4)
   return(plot_path)
 }
 
