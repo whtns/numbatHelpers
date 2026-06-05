@@ -11,7 +11,7 @@
 #' @param show_segment_names_on_x Logical; if TRUE, keep segment labels visible on the numbat heatmap x-axis.
 #' @return ggplot2 plot object
 #' @export
-make_numbat_heatmaps <- function(seu_path, numbat_rds_files, p_min = 0.9, line_width = 0.1, extension = "", midline_threshold = 0.4, show_segment_names_on_x = FALSE, numbat_rds_filtered_files = NULL) {
+make_numbat_heatmaps <- function(seu_path, numbat_rds_files, p_min = 0.9, line_width = 0.1, extension = "", midline_threshold = 0.4, show_segment_names_on_x = FALSE, numbat_rds_filtered_files = NULL, filter_midline = TRUE) {
   sample_id <- str_extract(seu_path, "SR[RX][0-9]+")
   names(numbat_rds_files) <- str_extract(numbat_rds_files, "SR[RX][0-9]+")
   if (!is.null(numbat_rds_filtered_files) && length(numbat_rds_filtered_files) > 0) {
@@ -31,18 +31,20 @@ make_numbat_heatmaps <- function(seu_path, numbat_rds_files, p_min = 0.9, line_w
   dir_create(glue("results/{numbat_dir}/"))
   dir_create(glue("results/{numbat_dir}/{sample_id}"))
   mynb <- readRDS(numbat_rds_file)
-  retained_segs <- mynb$joint_post |>
-    dplyr::mutate(at_midline = dplyr::case_when(
-      dplyr::between(p_cnv, 0.3, 0.7) ~ 1,
-      .default = 0
-    )) |>
-    group_by(seg) |>
-    dplyr::summarise(percent_at_midline = sum(at_midline)/dplyr::n()) |>
-    dplyr::filter(percent_at_midline <= midline_threshold) |>
-    dplyr::arrange(desc(percent_at_midline)) |>
-    dplyr::pull(seg) |>
-    identity()
-  mynb$joint_post <- mynb$joint_post[mynb$joint_post$seg %in% retained_segs,]
+  if (filter_midline) {
+    retained_segs <- mynb$joint_post |>
+      dplyr::mutate(at_midline = dplyr::case_when(
+        dplyr::between(p_cnv, 0.3, 0.7) ~ 1,
+        .default = 0
+      )) |>
+      group_by(seg) |>
+      dplyr::summarise(percent_at_midline = sum(at_midline)/dplyr::n()) |>
+      dplyr::filter(percent_at_midline <= midline_threshold) |>
+      dplyr::arrange(desc(percent_at_midline)) |>
+      dplyr::pull(seg) |>
+      identity()
+    mynb$joint_post <- mynb$joint_post[mynb$joint_post$seg %in% retained_segs,]
+  }
   retained_cells <- unique(mynb$joint_post$cell)
   clone_annot <- mynb$clone_post %>%
     dplyr::select(cell, clone_opt) %>%
