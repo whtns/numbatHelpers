@@ -1,93 +1,10 @@
 # Numbat plotting and analysis helper functions
-
-#' Plot numbat heatmap
-#'
-#' @param nb Numbat object
-#' @param myseu Seurat object
-#' @param myannot Annotation data frame
-#' @param mytitle Plot title
-#' @param sort_by Sorting variable
-#' @param ... Additional arguments
-#'
-#' @return ggplot object
-#' @export
-plot_numbat <- function(nb, myseu, myannot, mytitle, sort_by = "scna", ...) {
-  num_cols <- length(unique(nb$clone_post$clone_opt))
-  mypal <- scales::hue_pal()(num_cols) %>%
-    set_names(seq(num_cols))
-
-  myheatmap <- nb$plot_phylo_heatmap(
-    pal_clone = mypal,
-    annot = myannot,
-    show_phylo = FALSE,
-    sort_by = sort_by,
-    annot_bar_width = 1,
-    raster = FALSE,
-    ...
-  ) + ggplot2::labs(title = mytitle)
-
-  return(myheatmap)
-}
-
-#' Plot numbat heatmap with phylogeny
-#'
-#' @param nb Numbat object
-#' @param myseu Seurat object
-#' @param myannot Annotation data frame
-#' @param mytitle Plot title
-#' @param ... Additional arguments
-#'
-#' @return ggplot object
-#' @export
-plot_numbat_w_phylo <- function(nb, myseu, myannot, mytitle, ...) {
-  celltypes <- myseu@meta.data["type"] %>%
-    tibble::rownames_to_column("cell") %>%
-    dplyr::mutate(cell = stringr::str_replace(cell, "\\.", "-")) %>%
-    identity()
-
-  myannot <- dplyr::left_join(myannot, celltypes, by = "cell")
-  mypal <- c('1' = 'gray', '2' = "#377EB8", '3' = "#4DAF4A", '4' = "#984EA3")
-
-  nb$plot_phylo_heatmap(
-    pal_clone = mypal,
-    annot = myannot,
-    show_phylo = TRUE,
-    annot_bar_width = 1,
-    ...
-  ) + ggplot2::labs(title = mytitle)
-}
-
-safe_plot_numbat <- purrr::safely(plot_numbat, otherwise = NA_real_)
-safe_plot_numbat_w_phylo <- purrr::safely(plot_numbat_w_phylo, otherwise = NA_real_)
-
-#' Plot variability at SCNA
-#'
-#' @param phylo_plot_output Data from phylo plot
-#' @param chrom Chromosome
-#' @param p_min Minimum p value
-#'
-#' @return ggplot object
-#' @export
-plot_variability_at_SCNA <- function(phylo_plot_output, chrom = "1", p_min = 0.9){
-  test0 <- phylo_plot_output %>%
-    dplyr::mutate(seg = factor(seg, levels = stringr::str_sort(unique(seg), numeric = TRUE))) %>%
-    identity()
-
-  p_cnv_plot <- ggplot2::ggplot(test0, ggplot2::aes(x = cell_index, y = p_cnv, color = cnv_state)) +
-    ggplot2::geom_point(size = 0.1, alpha = 0.1) +
-    ggplot2::scale_x_reverse() +
-    ggplot2::scale_color_manual(values = c("amp" = "#7f180f",
-                                  "bamp" = "pink",
-                                  "del" = "#010185",
-                                  "loh" = "#387229")) +
-    ggplot2::facet_wrap(~seg)
-
-  return(p_cnv_plot)
-}
+# plot_numbat, plot_numbat_w_phylo, safe_plot_numbat, safe_plot_numbat_w_phylo,
+# plot_variability_at_SCNA, and score_chrom_instability are defined in the numbered files.
 
 #' Make numbat heatmaps from Seurat and numbat objects
 #'
-#' @param seu Seurat object
+#' @param seu Seurat object or file path to Seurat RDS
 #' @param numbat_rds_files Numbat RDS file paths
 #' @param p_min Minimum p value
 #' @param line_width Line width for plots
@@ -95,6 +12,7 @@ plot_variability_at_SCNA <- function(phylo_plot_output, chrom = "1", p_min = 0.9
 #' @param midline_threshold Threshold for midline filtering
 #' @param show_segment_names_on_x Show segment names on x-axis
 #' @param numbat_rds_filtered_files Optional filtered numbat files
+#' @param filter_midline Whether to apply midline segment filtering
 #'
 #' @return Character vector with plot paths
 #' @export
@@ -212,16 +130,4 @@ make_numbat_heatmaps <- function(seu, numbat_rds_files, p_min = 0.9, line_width 
     NA_character_
   }
   return(c(plot_path, scna_var_path_final))
-}
-
-#' Score chromosomal instability
-#'
-#' @param seu Seurat object
-#'
-#' @return Numeric vector of instability scores
-#' @export
-score_chrom_instability <- function(seu) {
-  # Placeholder for chromosome instability scoring
-  # Would need more information about implementation
-  rep(0, ncol(seu))
 }

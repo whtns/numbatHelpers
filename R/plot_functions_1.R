@@ -1,5 +1,172 @@
 # Plotting and annotation functions (1)
 
+#' @export
+plot_numbat <- function(nb, myseu, myannot, mytitle, sort_by = "clone_opt", show_segment_names_on_x = FALSE, ...) {
+  if ("clone_opt" %in% colnames(nb$clone_post)) {
+    nb$clone_post$clone_opt <- as.character(nb$clone_post$clone_opt)
+  }
+  if ("clone_opt" %in% colnames(myannot)) {
+    myannot$clone_opt <- as.character(myannot$clone_opt)
+  }
+  all_clones <- na.omit(unique(c(as.character(myannot$clone_opt), as.character(nb$clone_post$clone_opt))))
+  nclones <- max(as.integer(all_clones), na.rm = TRUE)
+  clone_pal <- scales::hue_pal()(nclones) %>% set_names(as.character(1:nclones))
+  myheatmap <- nb$plot_phylo_heatmap(
+    pal_clone = clone_pal,
+    pal_annot = clone_pal,
+    annot = myannot,
+    show_phylo = FALSE,
+    sort_by = sort_by,
+    annot_bar_width = 1,
+    raster = FALSE,
+    ...
+  ) +
+    ggplot2::labs(title = mytitle) +
+    ggplot2::theme(legend.position = "none")
+
+  .add_segment_labels_to_heatmap <- function(heatmap_obj, show_labels) {
+    if (!isTRUE(show_labels)) {
+      if (length(heatmap_obj) >= 2) {
+        heatmap_obj[[2]] <- heatmap_obj[[2]] + ggplot2::theme(legend.position = "none", axis.text.x = ggplot2::element_blank())
+      }
+      return(heatmap_obj)
+    }
+    heatmap_obj <- heatmap_obj &
+      ggplot2::theme(
+        legend.position = "none",
+        axis.text.x = ggplot2::element_blank(),
+        axis.ticks.x = ggplot2::element_blank(),
+        axis.title.x = ggplot2::element_blank()
+      )
+    if (length(heatmap_obj) >= 3 && !is.null(heatmap_obj[[3]]$data) && all(c("seg", "CHROM", "seg_start", "seg_end") %in% colnames(heatmap_obj[[3]]$data))) {
+      seg_labels <- heatmap_obj[[3]]$data %>%
+        dplyr::distinct(CHROM, seg, seg_start, seg_end) %>%
+        dplyr::arrange(CHROM, seg) %>%
+        dplyr::mutate(seg_mid = (seg_start + seg_end) / 2)
+      heatmap_obj[[3]] <- heatmap_obj[[3]] +
+        ggplot2::theme(
+          axis.text.x = ggplot2::element_blank(),
+          axis.ticks.x = ggplot2::element_blank(),
+          axis.title.x = ggplot2::element_blank()
+        ) +
+        ggplot2::geom_text(
+          data = seg_labels,
+          ggplot2::aes(x = seg_mid, y = -0.03, label = seg),
+          inherit.aes = FALSE,
+          size = 2.8,
+          angle = 90,
+          vjust = 0.5,
+          hjust = 1,
+          check_overlap = TRUE
+        ) +
+        ggplot2::theme(
+          strip.text = ggplot2::element_blank(),
+          axis.ticks.x = ggplot2::element_blank(),
+          axis.title.x = ggplot2::element_blank(),
+          plot.margin = ggplot2::margin(5.5, 5.5, 24, 5.5)
+        ) +
+        ggplot2::coord_cartesian(clip = "off")
+    }
+    heatmap_obj
+  }
+  myheatmap <- .add_segment_labels_to_heatmap(myheatmap, show_segment_names_on_x)
+  return(myheatmap)
+}
+
+#' @export
+plot_numbat_w_phylo <- function(nb, myseu, myannot, mytitle, show_segment_names_on_x = FALSE, ...) {
+  if ("clone_opt" %in% colnames(nb$clone_post)) {
+    nb$clone_post$clone_opt <- as.character(nb$clone_post$clone_opt)
+  }
+  if ("clone_opt" %in% colnames(myannot)) {
+    myannot$clone_opt <- as.character(myannot$clone_opt)
+  }
+  all_clones <- na.omit(unique(c(as.character(myannot$clone_opt), as.character(nb$clone_post$clone_opt))))
+  nclones <- max(as.integer(all_clones), na.rm = TRUE)
+  mypal <- scales::hue_pal()(nclones) %>% set_names(as.character(1:nclones))
+  myheatmap <- nb$plot_phylo_heatmap(
+    pal_clone = mypal,
+    annot = myannot,
+    show_phylo = TRUE,
+    annot_bar_width = 1,
+    ...
+  ) + ggplot2::labs(title = mytitle)
+
+  if (isTRUE(show_segment_names_on_x)) {
+    myheatmap <- myheatmap &
+      ggplot2::theme(
+        axis.text.x = ggplot2::element_blank(),
+        axis.ticks.x = ggplot2::element_blank(),
+        axis.title.x = ggplot2::element_blank()
+      )
+    if (length(myheatmap) >= 3 && !is.null(myheatmap[[3]]$data) && all(c("seg", "CHROM", "seg_start", "seg_end") %in% colnames(myheatmap[[3]]$data))) {
+      seg_labels <- myheatmap[[3]]$data %>%
+        dplyr::distinct(CHROM, seg, seg_start, seg_end) %>%
+        dplyr::arrange(CHROM, seg) %>%
+        dplyr::mutate(seg_mid = (seg_start + seg_end) / 2)
+      myheatmap[[3]] <- myheatmap[[3]] +
+        ggplot2::geom_text(
+          data = seg_labels,
+          ggplot2::aes(x = seg_mid, y = -0.03, label = seg),
+          inherit.aes = FALSE,
+          size = 2.8,
+          angle = 90,
+          vjust = 0.5,
+          hjust = 1,
+          check_overlap = TRUE
+        ) +
+        ggplot2::theme(
+          strip.text = ggplot2::element_blank(),
+          axis.ticks.x = ggplot2::element_blank(),
+          axis.title.x = ggplot2::element_blank(),
+          plot.margin = ggplot2::margin(5.5, 5.5, 24, 5.5)
+        ) +
+        ggplot2::coord_cartesian(clip = "off")
+    }
+  }
+  return(myheatmap)
+}
+
+safe_plot_numbat <- purrr::safely(plot_numbat, otherwise = NA_real_)
+safe_plot_numbat_w_phylo <- purrr::safely(plot_numbat_w_phylo, otherwise = NA_real_)
+
+#' @export
+plot_variability_at_SCNA <- function(phylo_plot_output, chrom = "1", p_min = 0.9) {
+  plot_input <- phylo_plot_output
+  plot_input$seg <- factor(plot_input$seg, levels = stringr::str_sort(unique(plot_input$seg), numeric = TRUE))
+  plot_input <- plot_input[order(plot_input$seg), ]
+  plot_input$cnv_state <- dplyr::case_when(
+    plot_input$cnv_state == "amp" ~ "gain",
+    plot_input$cnv_state == "bamp" ~ "balanced gain",
+    plot_input$cnv_state == "del" ~ "loss",
+    plot_input$cnv_state == "loh" ~ "CNLoH",
+    TRUE ~ plot_input$cnv_state
+  )
+  p_cnv_plot <- plot_input %>%
+    dplyr::group_by(seg) %>%
+    dplyr::filter(!all(is.na(LLR))) %>%
+    ggplot2::ggplot(ggplot2::aes(x = cell_index, y = p_cnv)) +
+    ggplot2::geom_point(ggplot2::aes(color = cnv_state), size = 0.1, alpha = 0.1) +
+    ggplot2::geom_hline(ggplot2::aes(yintercept = p_min), linetype = 'dashed', color = "grey") +
+    ggplot2::scale_x_reverse() +
+    ggplot2::scale_color_manual(values = c(
+      "gain" = "#7f180f",
+      "balanced gain" = "pink",
+      "loss" = "#010185",
+      "CNLoH" = "#387229"
+    )) +
+    ggplot2::labs(color = "SCNA state", fill = "Clone", y = "Probability of SCNA") +
+    ggplot2::facet_wrap(~seg) +
+    ggplot2::geom_tile(ggplot2::aes(y = -0.2, height = 0.1, fill = factor(clone_opt))) +
+    ggplot2::theme_minimal() +
+    ggplot2::theme(
+      axis.title.x = ggplot2::element_blank(),
+      axis.text.x = ggplot2::element_blank()
+    ) +
+    ggplot2::guides(color = ggplot2::guide_legend(override.aes = list(size = 5, alpha = 1)))
+  return(p_cnv_plot)
+}
+
 read_cluster_dictionary <- function(cluster_dictionary_path = "data/cluster_dictionary.csv") {
   cluster_dictionary <- read_tsv(cluster_dictionary_path) %>%
     split(.$sample_id)
