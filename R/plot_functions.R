@@ -115,7 +115,8 @@ make_numbat_heatmaps <- function(seu, numbat_rds_files, p_min = 0.9, line_width 
   } else {
     heatmap_w_phylo_path <- NULL
   }
-  plot_path <- glue::glue("results/{sample_id}/{sample_id}{extension}.pdf")
+  dir.create("results/numbat_heatmaps", showWarnings = FALSE, recursive = TRUE)
+  plot_path <- glue::glue("results/numbat_heatmaps/{sample_id}{extension}.pdf")
   pdf_inputs <- unlist(purrr::compact(list(heatmap_no_phylo_path, heatmap_w_phylo_path)))
   if (length(pdf_inputs) > 0) {
     qpdf::pdf_combine(pdf_inputs, plot_path)
@@ -123,7 +124,7 @@ make_numbat_heatmaps <- function(seu, numbat_rds_files, p_min = 0.9, line_width 
     plot_path <- NA_character_
   }
   scna_var_path_final <- if (!is.null(scna_var_path)) {
-    scna_var_final <- glue::glue("results/{sample_id}/{sample_id}{extension}_scna_var.pdf")
+    scna_var_final <- glue::glue("results/numbat_heatmaps/{sample_id}{extension}_scna_var.pdf")
     file.copy(scna_var_path, scna_var_final, overwrite = TRUE)
     scna_var_final
   } else {
