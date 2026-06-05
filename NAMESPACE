@@ -16,6 +16,7 @@ import(stringr)
 import(tibble)
 import(DBI)
 import(RSQLite)
+import(TxDb.Hsapiens.UCSC.hg38.knownGene)
 
 # Exported functions
 export(add_batch_hash_metadata)
