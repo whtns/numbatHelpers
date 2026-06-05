@@ -170,3 +170,17 @@ save_clone_tree_from_path <- function(seu_path, nb_paths, clone_simplifications,
   return(plot_path)
 }
 
+
+#' Retrieve a specific plot type from a list of numbat plot paths
+#'
+#' @param numbat_plots List or vector of file paths to numbat output PDFs
+#' @param plot_type Filename pattern to match (e.g. "exp_roll_clust.pdf")
+#' @return Character vector of matching file paths
+#' @export
+retrieve_numbat_plot_type <- function(numbat_plots, plot_type = "exp_roll_clust.pdf") {
+  retrieved_plot_types <- purrr::map(numbat_plots, ~set_names(.x, fs::path_file(.x))) %>%
+    purrr::map(stringr::str_detect, plot_type)
+
+  purrr::map2(numbat_plots, retrieved_plot_types, ~{.x[.y]}) %>%
+    unlist()
+}
