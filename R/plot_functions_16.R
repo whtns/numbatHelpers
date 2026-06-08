@@ -56,6 +56,7 @@ make_annoHighlight_from_consensus <- function(ideogramPlot, ploty, chrom, chroms
 #' @param suffix Optional suffix inserted before the karyogram filename stem
 #' @return ggplot2 plot object
 #' @export
+#'
 #' Generate ideograms for multiple suffixes from a single RDS load
 #'
 #' @param nb_path Numbat RDS file path

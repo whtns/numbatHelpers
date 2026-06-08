@@ -5,7 +5,7 @@
 \title{Create a plot visualization}
 \usage{
 plot_clone_tree(
-  seu,
+  clone_df,
   tumor_id,
   nb_path,
   clone_simplifications = NULL,
@@ -15,8 +15,6 @@ plot_clone_tree(
 )
 }
 \arguments{
-\item{seu}{Seurat object}
-
 \item{tumor_id}{Parameter for tumor id}
 
 \item{nb_path}{File path}
@@ -26,6 +24,8 @@ plot_clone_tree(
 \item{sample_id}{Parameter for sample id}
 
 \item{...}{Additional arguments passed to other functions}
+
+\item{seu}{Seurat object}
 }
 \value{
 ggplot2 plot object
