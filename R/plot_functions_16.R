@@ -71,7 +71,7 @@ make_rb_scna_ideograms_multi <- function(nb_path,
                                          filter_midline = FALSE) {
 	chrom_lengths <- seqlengths(TxDb.Hsapiens.UCSC.hg38.knownGene)
 	maxChromSize <- max(chrom_lengths)
-	hg38_assembly <- assembly("hg38")
+	hg38_assembly <- "hg38"
 	tumor_id <- str_extract(nb_path, "SR[RX][0-9]+")
 	dir.create("results/karyograms", showWarnings = FALSE, recursive = TRUE)
 
@@ -197,7 +197,7 @@ make_rb_scna_ideograms <- function(nb_path, midline_threshold = 0.4, suffix = ""
 	
 	pg_width = 4.25
 	pg_height = 8.85
-	hg38_assembly <- assembly("hg38")
+	hg38_assembly <- "hg38"
 	pdf(plot_path, width = pg_width, height = pg_height)
 
 	pageCreate(

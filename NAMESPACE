@@ -16,6 +16,8 @@ import(stringr)
 import(tibble)
 import(DBI)
 import(RSQLite)
+import(GenomeInfoDb)
+import(plotgardener)
 import(TxDb.Hsapiens.UCSC.hg38.knownGene)
 
 # Exported functions
