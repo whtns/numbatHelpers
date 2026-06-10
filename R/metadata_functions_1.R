@@ -40,6 +40,8 @@ add_batch_hash_metadata <- function(filepath = NULL, seu = NULL, sqlite_path = "
   # Write to sqlite
   con <- DBI::dbConnect(RSQLite::SQLite(), sqlite_path)
   on.exit(DBI::dbDisconnect(con), add = TRUE)
+  DBI::dbExecute(con, "PRAGMA journal_mode = WAL")
+  DBI::dbExecute(con, "PRAGMA busy_timeout = 30000")
   # Create table if not exists
   DBI::dbExecute(con, "CREATE TABLE IF NOT EXISTS hashes (filepath TEXT PRIMARY KEY, hash TEXT)")
   # Insert or replace
@@ -64,6 +66,8 @@ add_hash_metadata <- function(filepath = NULL, seu = NULL, sqlite_path = "batch_
   # Write to sqlite
   con <- DBI::dbConnect(RSQLite::SQLite(), sqlite_path)
   on.exit(DBI::dbDisconnect(con), add = TRUE)
+  DBI::dbExecute(con, "PRAGMA journal_mode = WAL")
+  DBI::dbExecute(con, "PRAGMA busy_timeout = 30000")
   DBI::dbExecute(con, "CREATE TABLE IF NOT EXISTS hashes (filepath TEXT PRIMARY KEY, hash TEXT)")
   # Add n_cells column if the table predates this change (idempotent)
   tryCatch(
@@ -153,6 +157,8 @@ upsert_resolution_dictionary <- function(resolution_df, sqlite_path = "batch_has
 
   con <- DBI::dbConnect(RSQLite::SQLite(), sqlite_path)
   on.exit(DBI::dbDisconnect(con), add = TRUE)
+  DBI::dbExecute(con, "PRAGMA journal_mode = WAL")
+  DBI::dbExecute(con, "PRAGMA busy_timeout = 30000")
 
   DBI::dbExecute(con, paste0(
     "CREATE TABLE IF NOT EXISTS resolution_dictionary ",
@@ -208,6 +214,8 @@ encode_cluster_order_to_hash_table <- function(
     cluster_orders, sqlite_path = "batch_hashes.sqlite") {
   con <- DBI::dbConnect(RSQLite::SQLite(), sqlite_path)
   on.exit(DBI::dbDisconnect(con), add = TRUE)
+  DBI::dbExecute(con, "PRAGMA journal_mode = WAL")
+  DBI::dbExecute(con, "PRAGMA busy_timeout = 30000")
   # Create table if not exists
   DBI::dbExecute(con, paste0(
     "CREATE TABLE IF NOT EXISTS cluster_orders ",
@@ -331,6 +339,8 @@ retrieve_current_param <- function(current_params, myparam) {
 save_cell_barcodes_to_db <- function(filepath, sample_id, seu_type, cells, sqlite_path = "batch_hashes.sqlite") {
   con <- DBI::dbConnect(RSQLite::SQLite(), sqlite_path)
   on.exit(DBI::dbDisconnect(con), add = TRUE)
+  DBI::dbExecute(con, "PRAGMA journal_mode = WAL")
+  DBI::dbExecute(con, "PRAGMA busy_timeout = 30000")
   DBI::dbExecute(con, paste0(
     "CREATE TABLE IF NOT EXISTS seu_cells ",
     "(filepath TEXT PRIMARY KEY, sample_id TEXT, seu_type TEXT, cells TEXT)"
