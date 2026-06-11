@@ -127,9 +127,8 @@ plot_pcnv_by_reads <- function(tbl, sample_id) {
 #' @param numbat_rds_file File path
 #' @return Data frame
 #' @export
-convert_numbat_pngs <- function(numbat_rds_file) {
-  
-  
+convert_numbat_pngs <- function(numbat_rds_file, n_sample = 6000, lim = 0.8) {
+
   numbat_output_dir <- str_remove(numbat_rds_file, "_numbat.*")
   sample_id <- str_extract(numbat_rds_file, "SR[RX][0-9]+")
   numbat_dir <- basename(dirname(numbat_output_dir))
@@ -138,9 +137,24 @@ convert_numbat_pngs <- function(numbat_rds_file) {
   numbat_pdfs <- stringr::str_replace(path_file(numbat_pngs), ".png", ".pdf")
   numbat_pdfs <- glue("results/{numbat_dir}/{sample_id}/{numbat_pdfs}")
   dir_create(glue("results/{numbat_dir}/{sample_id}"))
-  numbat_images <- purrr::map(numbat_pngs, image_read) %>%
+
+  # exp_roll_clust: regenerate as a true vector PDF using nb$plot_exp_roll() so
+  # the many thin per-cell strokes produce the characteristic hazy look.
+  exp_roll_idx <- which(names(numbat_pngs) == "exp_roll_clust.png")
+  if (length(exp_roll_idx) > 0) {
+    nb <- readRDS(numbat_rds_file)
+    k  <- length(unique(nb$clone_post$clone_opt))
+    pdf(numbat_pdfs[exp_roll_idx], width = 14, height = 5)
+    nb$plot_exp_roll(k = k, n_sample = n_sample, lim = lim)
+    dev.off()
+  }
+
+  # All other PNGs: convert via magick as before.
+  other_idx    <- setdiff(seq_along(numbat_pngs), exp_roll_idx)
+  other_images <- purrr::map(numbat_pngs[other_idx], image_read) %>%
     imap(~ image_annotate(.x, sample_id, size = 50))
-  map2(numbat_images, numbat_pdfs, ~ image_write(.x, format = "pdf", .y))
+  map2(other_images, numbat_pdfs[other_idx], ~ image_write(.x, format = "pdf", .y))
+
   return(numbat_pdfs)
 }
 
