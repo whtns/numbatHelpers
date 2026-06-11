@@ -131,12 +131,11 @@ convert_numbat_pngs <- function(numbat_rds_file, n_sample = 6000, lim = 0.8) {
 
   numbat_output_dir <- str_remove(numbat_rds_file, "_numbat.*")
   sample_id <- str_extract(numbat_rds_file, "SR[RX][0-9]+")
-  numbat_dir <- basename(dirname(numbat_output_dir))
   numbat_pngs <- dir_ls(numbat_output_dir, glob = "*.png") %>%
     set_names(path_file(.))
   numbat_pdfs <- stringr::str_replace(path_file(numbat_pngs), ".png", ".pdf")
-  numbat_pdfs <- glue("results/{numbat_dir}/{sample_id}/{numbat_pdfs}")
-  dir_create(glue("results/{numbat_dir}/{sample_id}"))
+  numbat_pdfs <- glue("results/numbat_plots/{sample_id}/{numbat_pdfs}")
+  dir_create(glue("results/numbat_plots/{sample_id}"))
 
   # exp_roll_clust: regenerate as a true vector PDF using nb$plot_exp_roll() so
   # the many thin per-cell strokes produce the characteristic hazy look.
