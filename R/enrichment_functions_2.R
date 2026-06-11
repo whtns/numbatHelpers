@@ -142,6 +142,11 @@ convert_numbat_pngs <- function(numbat_rds_file, n_sample = 6000, lim = 0.8) {
   exp_roll_idx <- which(names(numbat_pngs) == "exp_roll_clust.png")
   if (length(exp_roll_idx) > 0) {
     nb <- readRDS(numbat_rds_file)
+    # Pre-load gexp_roll_wide from the correct directory (nb$out_dir may point to
+    # a stale/renamed path for samples copied from SRR accessions).
+    nb$gexp_roll_wide <- data.table::fread(
+      file.path(numbat_output_dir, "gexp_roll_wide.tsv.gz")
+    ) |> as.data.frame() |> tibble::column_to_rownames("cell")
     k  <- length(unique(nb$clone_post$clone_opt))
     pdf(numbat_pdfs[exp_roll_idx], width = 14, height = 5)
     # plot_exp_roll returns the patchwork object; must print() to render to device.
