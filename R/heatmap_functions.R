@@ -220,7 +220,8 @@ subset_to_1q <- function(seu, file_id = NULL, slug="", ...) {
       "SRX11133593", c(2,3),
       "SRX11133592", c(2,3),
       "SRX10264523", c(1,2),
-      "SRX14116944", c(1,2)
+      "SRX14116944", c(1,2),
+      "SRX10831287", c(1,2)
   ) |>
       tidyr::unnest(clone_opt)
   
