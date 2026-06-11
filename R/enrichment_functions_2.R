@@ -127,7 +127,7 @@ plot_pcnv_by_reads <- function(tbl, sample_id) {
 #' @param numbat_rds_file File path
 #' @return Data frame
 #' @export
-convert_numbat_pngs <- function(numbat_rds_file, n_sample = 6000, lim = 0.8) {
+convert_numbat_pngs <- function(numbat_rds_file, n_sample = 2000, lim = 0.8) {
 
   numbat_output_dir <- str_remove(numbat_rds_file, "_numbat.*")
   sample_id <- str_extract(numbat_rds_file, "SR[RX][0-9]+")
