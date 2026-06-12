@@ -651,6 +651,7 @@ collate_sample_summary <- function(ideogram_res_s06a_unfiltered,
                                    unfiltered_numbat_bulk_clones,
                                    filtered_numbat_bulk_clones,
                                    low_hypoxia_numbat_bulk_clones,
+                                   filtering_cell_counts_table = NULL,
                                    density = 300) {
 
   sample_id <- str_extract(unlist(unfiltered_clone_tree_files)[1], "SR[RX][0-9]+")
@@ -827,6 +828,21 @@ collate_sample_summary <- function(ideogram_res_s06a_unfiltered,
   has_filt_hm   <- length(s03a_low_hypoxia) > 0
   has_karyo     <- file.exists(karyogram_unfiltered) || file.exists(karyogram_low_hypoxia)
 
+  # Read per-sample cell counts from filtering_cell_counts_table CSV if available
+  n_unfiltered_cells  <- NULL
+  n_filtered_cells    <- NULL
+  n_low_hypoxia_cells <- NULL
+  csv_path <- unlist(filtering_cell_counts_table)[1]
+  if (!is.null(csv_path) && !is.na(csv_path) && file.exists(csv_path)) {
+    counts_df <- readr::read_csv(csv_path, show_col_types = FALSE)
+    row <- counts_df[counts_df$sample_id == sample_id, ]
+    if (nrow(row) > 0) {
+      n_unfiltered_cells  <- row$n_unfiltered[1]
+      n_filtered_cells    <- row$n_pipeline_filtered[1]
+      n_low_hypoxia_cells <- row$n_low_hypoxia[1]
+    }
+  }
+
   # Build two explicit columns, each with five stacked rows.
   make_summary_col <- function(karyo_path,
                                clone_tree_paths,
@@ -838,7 +854,8 @@ collate_sample_summary <- function(ideogram_res_s06a_unfiltered,
                                tree_label_prefix,
                                hm_label,
                                expr_label,
-                               bulk_label) {
+                               bulk_label,
+                               n_cells = NULL) {
 
     # Build middle rows first so we can derive the column width
     tree_imgs <- c(
@@ -885,7 +902,14 @@ collate_sample_summary <- function(ideogram_res_s06a_unfiltered,
       magick::image_blank(col_width, 700L, color = "white")
     }
 
-    col_rows <- purrr::compact(list(row1, row2, row3, row3b, row4, row5))
+    count_strip <- if (!is.null(n_cells) && !is.na(n_cells)) {
+      strip <- magick::image_blank(col_width, 70L, color = "grey90")
+      magick::image_annotate(strip,
+        paste0("n = ", formatC(as.integer(n_cells), format = "d", big.mark = ",")),
+        size = 48, color = "black", gravity = "center", weight = 700)
+    } else NULL
+
+    col_rows <- purrr::compact(list(count_strip, row1, row2, row3, row3b, row4, row5))
     if (length(col_rows) == 0) return(NULL)
     make_col(col_rows)
   }
@@ -901,7 +925,8 @@ collate_sample_summary <- function(ideogram_res_s06a_unfiltered,
     "Unfiltered",
     "Unfiltered fig_s03a",
     "Unfiltered expression",
-    "Unfiltered bulk clones"
+    "Unfiltered bulk clones",
+    n_cells = n_unfiltered_cells
   )
 
   filtered_col <- make_summary_col(
@@ -915,7 +940,8 @@ collate_sample_summary <- function(ideogram_res_s06a_unfiltered,
     "Filtered",
     "Filtered fig_s03a",
     "Filtered expression",
-    "Filtered bulk clones"
+    "Filtered bulk clones",
+    n_cells = n_filtered_cells
   )
 
   low_hypoxia_col <- make_summary_col(
@@ -929,7 +955,8 @@ collate_sample_summary <- function(ideogram_res_s06a_unfiltered,
     "Low hypoxia",
     "Low hypoxia fig_s03a",
     "Low hypoxia expression",
-    "Low hypoxia bulk clones"
+    "Low hypoxia bulk clones",
+    n_cells = n_low_hypoxia_cells
   )
 
   # Combine up to three columns, padding each to the same height first
