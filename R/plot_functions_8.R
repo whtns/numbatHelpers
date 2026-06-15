@@ -54,6 +54,10 @@ assign_designated_phase_clusters <- function(seu_path, cluster_orders, resolutio
   file_id <- fs::path_file(seu_path)
 
   chosen_resolution <- resolution_dictionary[[file_id]]
+  if (is.null(chosen_resolution)) {
+    candidate <- grep(paste0("^", tumor_id, "_"), names(resolution_dictionary), value = TRUE)
+    if (length(candidate) > 0) chosen_resolution <- resolution_dictionary[[candidate[[1]]]]
+  }
 
   assign_phase_cluster_at_resolution(seu_path, cluster_order = cluster_orders, assay = "SCT", resolution = chosen_resolution)
 }

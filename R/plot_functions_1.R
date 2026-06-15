@@ -178,18 +178,24 @@ assign_phase_cluster_at_resolution <- function(seu_path = NULL, cluster_order = 
   #
 
 	file_id <- fs::path_file(seu_path)
-	
+
 	tumor_id <- str_extract(seu_path, "SR[RX][0-9]+")
-	
-	sample_id <- str_remove(fs::path_file(seu_path), "_filtered_seu.*")
-	
+
+	sample_id <- tumor_id
+
 	message(file_id)
-	cluster_order <- cluster_order[[file_id]]
+	cluster_order_entry <- cluster_order[[file_id]]
+	if (is.null(cluster_order_entry)) {
+	  candidate <- grep(paste0("^", tumor_id, "_"), names(cluster_order), value = TRUE)
+	  if (length(candidate) > 0) cluster_order_entry <- cluster_order[[candidate[[1]]]]
+	}
+	cluster_order <- cluster_order_entry
 
   seu <- readRDS(seu_path)
 
   # start loop ------------------------------
 
+  single_cluster_order <- NULL
 
   if (!is.null(cluster_order)) {
     single_cluster_order <- cluster_order[[resolution]]

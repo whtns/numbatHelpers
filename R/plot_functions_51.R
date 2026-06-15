@@ -113,7 +113,7 @@ make_cluster_comparisons_by_phase_for_disctinct_clones <- function(cluster_compa
   tumor_id <- str_extract(sample_id, "SR[RX][0-9]+")
 
   debranched_seus <- debranched_seus %>%
-    set_names(str_extract(., "SR[RX][0-9]+.*(?=_filtered_seu.rds)"))
+    set_names(str_extract(fs::path_file(.), "SR[RX][0-9]+(?:_branch_[0-9]+)?"))
 
   seu_path <- debranched_seus[[sample_id]]
 
