@@ -239,14 +239,34 @@ plot_hypoxia_gene_heatmap <- function(seu_path, group.by = "gene_snn_res.0.2", n
     plots <- c(plots, list(p_feat))
   }
 
-  dot_height  <- max(6, length(available_genes) * 0.35)
-  vln_height  <- if (length(plots) >= 2) 4 else 0
-  feat_height <- if (length(plots) >= 3) 5 else 0
-  total_height <- dot_height + vln_height + feat_height
+  # Panel 4: VlnPlot of ZFAS1 and GAS5 per cluster (hypoxia-associated lncRNAs)
+  lncrna_genes <- intersect(c("ZFAS1", "GAS5"), rownames(seu))
+  if (length(lncrna_genes) > 0) {
+    p_lnc <- Seurat::VlnPlot(seu, features = lncrna_genes, group.by = group.by,
+                              pt.size = 0, assay = "gene", combine = FALSE)
+    p_lnc <- purrr::map(p_lnc, ~ .x +
+      ggplot2::theme(legend.position = "none",
+                     axis.text.x = ggplot2::element_text(size = 8),
+                     plot.title  = ggplot2::element_text(size = 10)) +
+      ggplot2::labs(title = glue::glue("{sample_id}: {.x$labels$title} per cluster"))
+    )
+    plots <- c(plots, p_lnc)
+  }
 
-  combined <- patchwork::wrap_plots(plots, ncol = 1,
-                                    heights = c(dot_height, rep(c(vln_height, feat_height), length.out = length(plots) - 1)))
-  ggplot2::ggsave(out_path, combined, width = 12, height = total_height, limitsize = FALSE)
+  dot_height  <- max(6, length(available_genes) * 0.35)
+  vln_height  <- 4
+  feat_height <- 5
+  lnc_height  <- 4 * length(lncrna_genes)
+
+  panel_heights <- c(
+    dot_height,
+    if ("hypoxia_score" %in% colnames(seu@meta.data)) vln_height else NULL,
+    if (!is.na(umap_key) && "hypoxia_score" %in% colnames(seu@meta.data)) feat_height else NULL,
+    rep(lnc_height / max(length(lncrna_genes), 1), length(lncrna_genes))
+  )
+
+  combined <- patchwork::wrap_plots(plots, ncol = 1, heights = panel_heights)
+  ggplot2::ggsave(out_path, combined, width = 12, height = sum(panel_heights), limitsize = FALSE)
   out_path
 }
 
