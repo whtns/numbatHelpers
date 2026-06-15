@@ -162,7 +162,7 @@ add_hypoxia_score <- function(seu) {
 #' @return The input Seurat object with `hypoxia`, `MT`, and `hypoxia_score` added to `@meta.data`.
 #' @export
 
-plot_hypoxia_gene_heatmap <- function(seu_path, group.by = "gene_snn_res.0.2", n_genes = 50) {
+plot_hypoxia_gene_heatmap <- function(seu_path, group.by = "gene_snn_res.0.2", n_genes = 30) {
   if (is.na(seu_path)) return(NA_character_)
 
   sample_id <- stringr::str_extract(seu_path, "SR[RX][0-9]+")
@@ -173,7 +173,6 @@ plot_hypoxia_gene_heatmap <- function(seu_path, group.by = "gene_snn_res.0.2", n
   seu <- readRDS(seu_path)
   Seurat::DefaultAssay(seu) <- "gene"
 
-  # Same gene set used in add_hypoxia_score
   msig_db_human <- msigdbr::msigdbr(species = "Homo sapiens")
   hypoxia_genes <- msig_db_human %>%
     dplyr::filter(gs_name == "HALLMARK_HYPOXIA") %>%
@@ -185,30 +184,69 @@ plot_hypoxia_gene_heatmap <- function(seu_path, group.by = "gene_snn_res.0.2", n
     return(NA_character_)
   }
 
-  # Rank by cross-cell variance; keep top n_genes
-  if (length(available_genes) > n_genes) {
-    gene_mat <- Seurat::GetAssayData(seu, assay = "gene", layer = "data")[available_genes, , drop = FALSE]
-    gene_vars <- apply(gene_mat, 1, var)
-    available_genes <- names(sort(gene_vars, decreasing = TRUE))[seq_len(n_genes)]
-  }
-
   # Fall back to a valid grouping column if requested one is absent
   if (!group.by %in% colnames(seu@meta.data)) {
     group.by <- grep("_snn_res\\.", colnames(seu@meta.data), value = TRUE)[1]
   }
+  if (is.na(group.by) || is.null(group.by)) {
+    warning("No valid cluster column found in: ", seu_path)
+    return(NA_character_)
+  }
 
-  seu <- Seurat::ScaleData(seu, assay = "gene", features = available_genes, verbose = FALSE)
+  # Rank genes by between-cluster variance (variance of per-cluster mean expression).
+  # This selects genes that best discriminate clusters, not just high-variance cells.
+  if (length(available_genes) > n_genes) {
+    gene_mat <- Seurat::GetAssayData(seu, assay = "gene", layer = "data")[available_genes, , drop = FALSE]
+    cluster_ids <- seu@meta.data[[group.by]]
+    cluster_means <- sapply(levels(factor(cluster_ids)), function(cl) {
+      rowMeans(gene_mat[, cluster_ids == cl, drop = FALSE])
+    })
+    between_cluster_var <- apply(cluster_means, 1, var)
+    available_genes <- names(sort(between_cluster_var, decreasing = TRUE))[seq_len(n_genes)]
+  }
 
-  p <- Seurat::DoHeatmap(seu, features = available_genes, group.by = group.by,
-                         assay = "gene", layer = "scale.data") +
-    ggplot2::ggtitle(glue::glue("{sample_id}: HALLMARK_HYPOXIA (low-hypoxia cells)")) +
-    ggplot2::theme(plot.title = ggplot2::element_text(size = 10),
-                   axis.text.y  = ggplot2::element_text(size = 6))
+  # Panel 1: DotPlot — average expression + % expressing per cluster, genes on Y axis
+  p_dot <- Seurat::DotPlot(seu, features = available_genes, group.by = group.by, assay = "gene") +
+    ggplot2::coord_flip() +
+    ggplot2::ggtitle(glue::glue("{sample_id}: HALLMARK_HYPOXIA by cluster (low-hypoxia cells)")) +
+    ggplot2::theme(
+      axis.text.x  = ggplot2::element_text(size = 8),
+      axis.text.y  = ggplot2::element_text(size = 6),
+      plot.title   = ggplot2::element_text(size = 10)
+    )
 
-  ggplot2::ggsave(out_path, p,
-                  width  = 14,
-                  height = max(6, length(available_genes) * 0.18),
-                  limitsize = FALSE)
+  # Panel 2: VlnPlot of hypoxia_score per cluster (the composite score already in metadata)
+  plots <- list(p_dot)
+  if ("hypoxia_score" %in% colnames(seu@meta.data)) {
+    p_vln <- Seurat::VlnPlot(seu, features = "hypoxia_score", group.by = group.by,
+                              pt.size = 0, assay = "gene") +
+      ggplot2::ggtitle(glue::glue("{sample_id}: hypoxia_score per cluster")) +
+      ggplot2::theme(
+        legend.position = "none",
+        axis.text.x     = ggplot2::element_text(size = 8),
+        plot.title      = ggplot2::element_text(size = 10)
+      )
+    plots <- c(plots, list(p_vln))
+  }
+
+  # Panel 3: FeaturePlot of hypoxia_score on UMAP (if reduction exists)
+  umap_key <- grep("^umap", names(seu@reductions), ignore.case = TRUE, value = TRUE)[1]
+  if (!is.na(umap_key) && "hypoxia_score" %in% colnames(seu@meta.data)) {
+    p_feat <- Seurat::FeaturePlot(seu, features = "hypoxia_score",
+                                   reduction = umap_key, pt.size = 0.3) +
+      ggplot2::ggtitle(glue::glue("{sample_id}: hypoxia_score (UMAP)")) +
+      ggplot2::theme(plot.title = ggplot2::element_text(size = 10))
+    plots <- c(plots, list(p_feat))
+  }
+
+  dot_height  <- max(6, length(available_genes) * 0.35)
+  vln_height  <- if (length(plots) >= 2) 4 else 0
+  feat_height <- if (length(plots) >= 3) 5 else 0
+  total_height <- dot_height + vln_height + feat_height
+
+  combined <- patchwork::wrap_plots(plots, ncol = 1,
+                                    heights = c(dot_height, rep(c(vln_height, feat_height), length.out = length(plots) - 1)))
+  ggplot2::ggsave(out_path, combined, width = 12, height = total_height, limitsize = FALSE)
   out_path
 }
 
