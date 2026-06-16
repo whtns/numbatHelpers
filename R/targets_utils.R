@@ -104,3 +104,18 @@ rename_target <- function(old_name, new_name,
 
   invisible(renamed_files)
 }
+
+#' Combine per-sample Numbat PDFs from the results directory into one file
+#'
+#' @param numbat_rds_file Path to a Numbat RDS file; sample ID is extracted from the filename.
+#' @param label Suffix appended before ".pdf" in the output filename.
+#' @return Path to the combined PDF.
+#' @export
+reroute_done_to_results_pdf <- function(numbat_rds_file, label = "") {
+  sample_id  <- stringr::str_extract(numbat_rds_file, "SR[RX][0-9]+")
+  numbat_dir <- fs::path_split(numbat_rds_file)[[1]][[2]]
+  numbat_pdfs <- fs::dir_ls(glue::glue("results/{numbat_dir}/{sample_id}/"), glob = "*.pdf")
+  results_file <- glue::glue("results/{numbat_dir}/{sample_id}{label}.pdf")
+  qpdf::pdf_combine(numbat_pdfs, results_file)
+  return(results_file)
+}
