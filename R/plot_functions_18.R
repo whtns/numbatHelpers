@@ -130,13 +130,16 @@ plot_fig_s20 <- function() {
 	ggsave(cis_path, w = 4, h = 5) |> 
 		browseURL()
 	
-	all_diffex <- 
-		diffex_2p |> 
-		dplyr::filter(!is.na(entrez)) |> 
-		dplyr::mutate(Gene.Name = symbol) |> 
-		dplyr::select(-any_of(colnames(annotables::grch38))) |> 
-		split(~cluster) |> 
-		map(tibble::column_to_rownames, "Gene.Name") |> 
+	all_diffex <-
+		diffex_2p |>
+		dplyr::filter(!is.na(entrez)) |>
+		dplyr::mutate(Gene.Name = symbol) |>
+		dplyr::select(-any_of(colnames(annotables::grch38))) |>
+		dplyr::group_by(cluster, Gene.Name) |>
+		dplyr::slice_max(avg_log2FC, n = 1, with_ties = FALSE) |>
+		dplyr::ungroup() |>
+		split(~cluster) |>
+		map(tibble::column_to_rownames, "Gene.Name") |>
 		identity()
 	
 	enrichments <- 
@@ -216,13 +219,16 @@ plot_fig_s10 <- function(plot_path = "results/fig_s10.pdf", table_path = "result
 	ggsave(cis_path, w = 4, h = 3) |> 
 		browseURL()
 	
-	all_diffex <- 
-		diffex_16q |> 
-		dplyr::filter(!is.na(entrez)) |> 
-		dplyr::mutate(Gene.Name = symbol) |> 
-		dplyr::select(-any_of(colnames(annotables::grch38))) |> 
-		split(~cluster) |> 
-		map(tibble::column_to_rownames, "Gene.Name") |> 
+	all_diffex <-
+		diffex_16q |>
+		dplyr::filter(!is.na(entrez)) |>
+		dplyr::mutate(Gene.Name = symbol) |>
+		dplyr::select(-any_of(colnames(annotables::grch38))) |>
+		dplyr::group_by(cluster, Gene.Name) |>
+		dplyr::slice_max(avg_log2FC, n = 1, with_ties = FALSE) |>
+		dplyr::ungroup() |>
+		split(~cluster) |>
+		map(tibble::column_to_rownames, "Gene.Name") |>
 		identity()
 	
 	enrichments <- 
@@ -309,13 +315,16 @@ plot_fig_s08 <- function(plot_path = "results/fig_s08.pdf", table_path = "result
 	ggsave(cis_path, w = 4, h = 7) |> 
 		browseURL()
 	
-	all_diffex <- 
-		diffex_1q |> 
-		dplyr::filter(!is.na(entrez)) |> 
-		dplyr::mutate(Gene.Name = symbol) |> 
-		dplyr::select(-any_of(colnames(annotables::grch38))) |> 
-		split(~cluster) |> 
-		map(tibble::column_to_rownames, "Gene.Name") |> 
+	all_diffex <-
+		diffex_1q |>
+		dplyr::filter(!is.na(entrez)) |>
+		dplyr::mutate(Gene.Name = symbol) |>
+		dplyr::select(-any_of(colnames(annotables::grch38))) |>
+		dplyr::group_by(cluster, Gene.Name) |>
+		dplyr::slice_max(avg_log2FC, n = 1, with_ties = FALSE) |>
+		dplyr::ungroup() |>
+		split(~cluster) |>
+		map(tibble::column_to_rownames, "Gene.Name") |>
 		identity()
 	
 	enrichments <- 
