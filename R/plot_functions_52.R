@@ -673,23 +673,6 @@ collate_sample_summary <- function(ideogram_res_s06a_unfiltered,
   clone_trees_low_hypoxia   <- clone_trees_low_hypoxia[!is.na(clone_trees_low_hypoxia) & str_detect(clone_trees_low_hypoxia, sample_id)]
   segment_trees_low_hypoxia <- segment_trees_low_hypoxia[!is.na(segment_trees_low_hypoxia) & str_detect(segment_trees_low_hypoxia, sample_id)]
 
-  # Disk fallbacks: targets store may be NULL if upstream branch errored but files were written
-  if (length(clone_trees_filtered) == 0) {
-    fb <- file.path("results/clone_trees", paste0(sample_id, "_filtered_clone_tree.pdf"))
-    if (file.exists(fb)) clone_trees_filtered <- fb
-  }
-  if (length(segment_trees_filtered) == 0) {
-    fb <- file.path("results/clone_trees", paste0(sample_id, "_filtered_segment_tree.pdf"))
-    if (file.exists(fb)) segment_trees_filtered <- fb
-  }
-  if (length(clone_trees_low_hypoxia) == 0) {
-    cands <- Sys.glob(file.path("results/clone_trees", paste0(sample_id, "*_low_hypoxia_clone_tree.pdf")))
-    clone_trees_low_hypoxia <- cands[file.exists(cands)]
-  }
-  if (length(segment_trees_low_hypoxia) == 0) {
-    cands <- Sys.glob(file.path("results/clone_trees", paste0(sample_id, "*_low_hypoxia_segment_tree.pdf")))
-    segment_trees_low_hypoxia <- cands[file.exists(cands)]
-  }
 
   # keep unfiltered/filtered/low_hypoxia separate for three-column layout
   s03a_low_hypoxia <- unlist(fig_s03a_low_hypoxia_plots)
