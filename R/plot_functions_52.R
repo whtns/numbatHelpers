@@ -654,7 +654,9 @@ collate_sample_summary <- function(ideogram_res_s06a_unfiltered,
                                    filtering_cell_counts_table = NULL,
                                    density = 300) {
 
-  sample_id <- str_extract(unlist(unfiltered_clone_tree_files)[1], "SR[RX][0-9]+")
+  tree_files_vec <- unlist(unfiltered_clone_tree_files)
+  if (length(tree_files_vec) == 0) return(NULL)
+  sample_id <- str_extract(tree_files_vec[1], "SR[RX][0-9]+")
   if (is.na(sample_id)) return(NULL)
 
   clone_trees_unfiltered    <- unlist(unfiltered_clone_tree_files)
