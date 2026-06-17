@@ -33,6 +33,24 @@ generate_filtering_cell_counts <- function(filtered_seus, seus_low_hypoxia, filt
 
   filtered_paths  <- na.omit(unlist(filtered_seus))
   lh_paths        <- na.omit(unlist(seus_low_hypoxia))
+
+  # Fallback: for samples in base not covered by pipeline targets, check DB directly
+  covered_filtered <- stringr::str_extract(filtered_paths, "SR[RX][0-9]+")
+  missing_filtered <- setdiff(base$sample_id, covered_filtered)
+  missing_filtered <- missing_filtered[!is.na(missing_filtered)]
+  if (length(missing_filtered) > 0) {
+    fb <- file.path("output/seurat", paste0(missing_filtered, "_filtered_seu.rds"))
+    filtered_paths <- c(filtered_paths, fb[file.exists(fb)])
+  }
+
+  covered_lh <- stringr::str_extract(lh_paths, "SR[RX][0-9]+")
+  missing_lh <- setdiff(base$sample_id, covered_lh)
+  missing_lh <- missing_lh[!is.na(missing_lh)]
+  if (length(missing_lh) > 0) {
+    fb <- file.path("output/seurat", paste0(missing_lh, "_hypoxia_low_seu.rds"))
+    lh_paths <- c(lh_paths, fb[file.exists(fb)])
+  }
+
   all_paths       <- c(filtered_paths, lh_paths)
 
   db_rows <- if (length(all_paths) == 0) {

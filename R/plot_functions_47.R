@@ -130,7 +130,7 @@ plot_clone_tree_from_path <- function(seu_path, nb_paths, clone_simplifications,
 #' @export
 save_clone_tree_from_path <- function(seu_path, nb_paths, clone_simplifications, label = "_clone_tree", ...) {
 
-  if (is.na(seu_path)) {
+  if (is.null(seu_path) || length(seu_path) == 0 || is.na(seu_path)) {
     return(NA_character_)
   }
 
