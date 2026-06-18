@@ -547,12 +547,17 @@ plot_effect_of_filtering <- function(unfiltered_seu_path, filtered_seu_path = NU
   cat("DEBUG: p_low_hypoxia is NULL?", is.null(p_low_hypoxia), "\n")
   cat("DEBUG: p_high_hypoxia is NULL?", is.null(p_high_hypoxia), "\n")
 
-  # Collect available plots and combine horizontally
+  # Collect available plots and combine horizontally.
+  # Annotate each marker panel title with its cell count (n).
+  n_label <- function(label, seu) {
+    if (is.null(seu)) return(label)
+    glue::glue("{label} (n = {format(ncol(seu), big.mark = ',')})")
+  }
   plot_items <- list()
-  if (!is.null(p_unfiltered)) plot_items[["unfiltered"]] <- p_unfiltered + labs(title = "unfiltered")
-  if (!is.null(p_filtered)) plot_items[["filtered"]] <- p_filtered + labs(title = "filtered")
-  if (!is.null(p_low_hypoxia)) plot_items[["low_hypoxia"]] <- p_low_hypoxia + labs(title = "low_hypoxia")
-  if (!is.null(p_high_hypoxia)) plot_items[["high_hypoxia"]] <- p_high_hypoxia + labs(title = "high_hypoxia")
+  if (!is.null(p_unfiltered)) plot_items[["unfiltered"]] <- p_unfiltered + labs(title = n_label("unfiltered", unfiltered_seu))
+  if (!is.null(p_filtered)) plot_items[["filtered"]] <- p_filtered + labs(title = n_label("filtered", filtered_seu))
+  if (!is.null(p_low_hypoxia)) plot_items[["low_hypoxia"]] <- p_low_hypoxia + labs(title = n_label("low_hypoxia", low_hypoxia_seu))
+  if (!is.null(p_high_hypoxia)) plot_items[["high_hypoxia"]] <- p_high_hypoxia + labs(title = n_label("high_hypoxia", high_hypoxia_seu))
 
   if (length(plot_items) > 0) {
     grid <- patchwork::wrap_plots(plot_items, ncol = length(plot_items)) +
