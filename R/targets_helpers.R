@@ -56,7 +56,7 @@ generate_filtering_cell_counts <- function(filtered_seus, seus_low_hypoxia, filt
   db_rows <- if (length(all_paths) == 0) {
     tibble::tibble(filepath = character(), n_cells = integer())
   } else {
-    con <- DBI::dbConnect(RSQLite::SQLite(), sqlite_path)
+    con <- connect_hash_db(sqlite_path)
     on.exit(DBI::dbDisconnect(con), add = TRUE)
     placeholders <- paste(rep("?", length(all_paths)), collapse = ", ")
     DBI::dbGetQuery(

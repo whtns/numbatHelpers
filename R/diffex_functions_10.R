@@ -94,7 +94,7 @@ tally_kooi_candidates <- function(cis_diffex_clones = "results/diffex_bw_clones_
 #' @export
 retrieve_cell_stats <- function(seu_path, sqlite_path = "batch_hashes.sqlite") {
     if (file.exists(sqlite_path)) {
-      con <- DBI::dbConnect(RSQLite::SQLite(), sqlite_path)
+      con <- connect_hash_db(sqlite_path)
       on.exit(DBI::dbDisconnect(con), add = TRUE)
 
       if (DBI::dbExistsTable(con, "cell_qc_values")) {

@@ -21,7 +21,7 @@ DEFAULT_DB <- "batch_hashes.sqlite"
 #' @return Invisibly returns the database path.
 #' @export
 init_seu_metadata_db <- function(sqlite_path = DEFAULT_DB) {
-  con <- DBI::dbConnect(RSQLite::SQLite(), sqlite_path)
+  con <- connect_hash_db(sqlite_path)
   on.exit(DBI::dbDisconnect(con))
 
   DBI::dbExecute(con, "
@@ -141,7 +141,7 @@ extract_seu_metadata <- function(
   }
 
   init_seu_metadata_db(sqlite_path)
-  con <- DBI::dbConnect(RSQLite::SQLite(), sqlite_path)
+  con <- connect_hash_db(sqlite_path)
   on.exit(DBI::dbDisconnect(con))
 
   md       <- seu@meta.data
@@ -369,7 +369,7 @@ extract_seu_metadata <- function(
 #' @return A data frame with one row per tracked object.
 #' @export
 list_seu_objects <- function(sqlite_path = DEFAULT_DB, stage = NULL, scna = NULL) {
-  con <- DBI::dbConnect(RSQLite::SQLite(), sqlite_path)
+  con <- connect_hash_db(sqlite_path)
   on.exit(DBI::dbDisconnect(con))
 
   q <- "SELECT filepath, hash, n_cells, n_features, sample_id,
@@ -390,7 +390,7 @@ list_seu_objects <- function(sqlite_path = DEFAULT_DB, stage = NULL, scna = NULL
 #' @return A data frame with one row per metadata column.
 #' @export
 get_metadata_summary <- function(filepath, sqlite_path = DEFAULT_DB) {
-  con <- DBI::dbConnect(RSQLite::SQLite(), sqlite_path)
+  con <- connect_hash_db(sqlite_path)
   on.exit(DBI::dbDisconnect(con))
   DBI::dbGetQuery(con, "
     SELECT column_name, dtype, n_cells, n_unique, n_na, summary_json
@@ -408,7 +408,7 @@ get_metadata_summary <- function(filepath, sqlite_path = DEFAULT_DB) {
 #' @return A data frame with cell-level QC columns.
 #' @export
 get_cell_qc_values <- function(filepath, sqlite_path = DEFAULT_DB) {
-  con <- DBI::dbConnect(RSQLite::SQLite(), sqlite_path)
+  con <- connect_hash_db(sqlite_path)
   on.exit(DBI::dbDisconnect(con))
   DBI::dbGetQuery(con, "
     SELECT cell, nCount_gene, nFeature_gene, percent_mt
@@ -426,7 +426,7 @@ get_cell_qc_values <- function(filepath, sqlite_path = DEFAULT_DB) {
 #' @return A data frame with cluster, n_cells, pct_cells columns.
 #' @export
 get_cluster_composition <- function(filepath, sqlite_path = DEFAULT_DB) {
-  con <- DBI::dbConnect(RSQLite::SQLite(), sqlite_path)
+  con <- connect_hash_db(sqlite_path)
   on.exit(DBI::dbDisconnect(con))
   DBI::dbGetQuery(con, "
     SELECT cluster, n_cells, pct_cells
@@ -445,7 +445,7 @@ get_cluster_composition <- function(filepath, sqlite_path = DEFAULT_DB) {
 #' @return A data frame with cluster, marker_rank, and gene_name columns.
 #' @export
 get_cluster_markers <- function(filepath, top_n = 5, sqlite_path = DEFAULT_DB) {
-  con <- DBI::dbConnect(RSQLite::SQLite(), sqlite_path)
+  con <- connect_hash_db(sqlite_path)
   on.exit(DBI::dbDisconnect(con))
   DBI::dbGetQuery(con, "
     SELECT cluster, marker_rank, gene_name
@@ -467,7 +467,7 @@ get_cluster_markers <- function(filepath, top_n = 5, sqlite_path = DEFAULT_DB) {
 compare_cluster_composition <- function(sqlite_path = DEFAULT_DB,
                                         group_by = c("scna_type", "processing_stage")) {
   group_by <- match.arg(group_by)
-  con <- DBI::dbConnect(RSQLite::SQLite(), sqlite_path)
+  con <- connect_hash_db(sqlite_path)
   on.exit(DBI::dbDisconnect(con))
   DBI::dbGetQuery(con, glue::glue("
     SELECT s.{group_by},
@@ -489,7 +489,7 @@ compare_cluster_composition <- function(sqlite_path = DEFAULT_DB,
 #' @return A data frame with quantile columns.
 #' @export
 get_qc_metrics <- function(filepath = NULL, metric = NULL, sqlite_path = DEFAULT_DB) {
-  con <- DBI::dbConnect(RSQLite::SQLite(), sqlite_path)
+  con <- connect_hash_db(sqlite_path)
   on.exit(DBI::dbDisconnect(con))
 
   q <- "SELECT q.filepath, s.sample_id, s.scna_type, s.processing_stage,

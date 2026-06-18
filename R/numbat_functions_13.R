@@ -103,7 +103,7 @@ make_table_s03 <- function(cluster_dictionary,
 		stop(glue::glue("SQLite database not found: {sqlite_path}"))
 	}
 	
-	con <- DBI::dbConnect(RSQLite::SQLite(), sqlite_path)
+	con <- connect_hash_db(sqlite_path)
 	on.exit(DBI::dbDisconnect(con))
 	
 	representative_paths <- DBI::dbGetQuery(
