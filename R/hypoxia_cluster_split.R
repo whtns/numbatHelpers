@@ -33,45 +33,84 @@
 #' @param min_markers,top_n Marker-overlap rule parameters.
 #' @param score_quantile Quantile of per-cell `hypoxia_score` above which a
 #'   cluster's mean is considered elevated.
-#' @return Character vector of hypoxia cluster ids (possibly empty). Never
-#'   errors — returns `character(0)` on failure.
+#' @param return_detail If `TRUE`, return the full per-cluster decision table
+#'   (one row per cluster) instead of just the flagged cluster ids.
+#' @return By default a character vector of hypoxia cluster ids (possibly
+#'   empty). With `return_detail = TRUE`, a data.frame with columns `cluster`,
+#'   `n_cells`, `n_hyp_markers`, `matched_genes`, `mean_score`,
+#'   `score_threshold`, `marker_hit`, `score_hit`, `flagged`, `rule`. Never
+#'   errors — returns an empty result of the requested shape on failure.
 #' @export
 identify_hypoxia_clusters <- function(seu, grp,
                                       hypoxia_genes = .hypoxia_marker_set,
                                       min_markers = 2, top_n = 20,
-                                      score_quantile = 0.75) {
+                                      score_quantile = 0.75,
+                                      return_detail = FALSE) {
+  empty <- if (return_detail) {
+    data.frame(cluster = character(0), n_cells = integer(0),
+               n_hyp_markers = integer(0), matched_genes = character(0),
+               mean_score = numeric(0), score_threshold = numeric(0),
+               marker_hit = logical(0), score_hit = logical(0),
+               flagged = logical(0), rule = character(0),
+               stringsAsFactors = FALSE)
+  } else character(0)
+
   tryCatch({
-    da <- Seurat::DefaultAssay(seu)
-    # marker-overlap hits
-    marker_hits <- character(0)
-    n_grp <- length(unique(as.character(seu@meta.data[[grp]])))
-    if (n_grp >= 2) {
-      m <- presto::wilcoxauc(seu, grp, seurat_assay = da)
-      marker_hits <- m |>
+    da       <- Seurat::DefaultAssay(seu)
+    grpv     <- as.character(seu@meta.data[[grp]])
+    clusters <- sort(unique(grpv))
+    cl_n     <- as.integer(table(factor(grpv, levels = clusters)))
+
+    # marker overlap per cluster
+    n_hyp   <- stats::setNames(rep(0L, length(clusters)), clusters)
+    matched <- stats::setNames(rep("", length(clusters)), clusters)
+    if (length(clusters) >= 2) {
+      top <- presto::wilcoxauc(seu, grp, seurat_assay = da) |>
         dplyr::filter(.data$padj < 0.5) |>
         dplyr::group_by(.data$group) |>
         dplyr::arrange(dplyr::desc(.data$logFC), .by_group = TRUE) |>
         dplyr::slice_head(n = top_n) |>
-        dplyr::summarise(n_hyp = sum(.data$feature %in% hypoxia_genes),
-                         .groups = "drop") |>
-        dplyr::filter(.data$n_hyp >= min_markers) |>
-        dplyr::pull(.data$group) |>
-        as.character()
+        dplyr::summarise(
+          n = sum(.data$feature %in% hypoxia_genes),
+          g = paste(.data$feature[.data$feature %in% hypoxia_genes],
+                    collapse = ","),
+          .groups = "drop")
+      idx <- as.character(top$group)
+      n_hyp[idx]   <- as.integer(top$n)
+      matched[idx] <- top$g
     }
-    # score-corroboration hits
-    score_hits <- character(0)
+
+    # score corroboration per cluster
     if ("hypoxia_score" %in% colnames(seu@meta.data)) {
-      sc   <- seu$hypoxia_score
-      grpv <- as.character(seu@meta.data[[grp]])
-      thr  <- stats::quantile(sc, score_quantile, na.rm = TRUE)
-      cl_mean <- tapply(sc, grpv, mean, na.rm = TRUE)
-      score_hits <- names(cl_mean)[!is.na(cl_mean) & cl_mean >= thr]
+      sc      <- seu$hypoxia_score
+      thr     <- as.numeric(stats::quantile(sc, score_quantile, na.rm = TRUE))
+      cl_mean <- tapply(sc, factor(grpv, levels = clusters), mean, na.rm = TRUE)
+    } else {
+      thr     <- NA_real_
+      cl_mean <- stats::setNames(rep(NA_real_, length(clusters)), clusters)
     }
-    as.character(union(marker_hits, score_hits))
+
+    detail <- data.frame(
+      cluster         = clusters,
+      n_cells         = cl_n,
+      n_hyp_markers   = unname(n_hyp[clusters]),
+      matched_genes   = unname(matched[clusters]),
+      mean_score      = unname(as.numeric(cl_mean[clusters])),
+      score_threshold = thr,
+      stringsAsFactors = FALSE)
+    detail$marker_hit <- detail$n_hyp_markers >= min_markers
+    detail$score_hit  <- !is.na(detail$mean_score) & !is.na(thr) &
+                         detail$mean_score >= thr
+    detail$flagged    <- detail$marker_hit | detail$score_hit
+    detail$rule <- ifelse(detail$marker_hit & detail$score_hit, "both",
+                   ifelse(detail$marker_hit, "marker",
+                   ifelse(detail$score_hit, "score", "none")))
+
+    if (return_detail) detail else as.character(detail$cluster[detail$flagged])
   }, error = function(e) {
     warning("identify_hypoxia_clusters failed for ", grp, ": ",
             conditionMessage(e))
-    character(0)
+    empty
   })
 }
 
@@ -161,6 +200,7 @@ split_hypoxia_by_clusters <- function(hypoxia_seu_path,
 
   seu$hypoxia_round <- NA_integer_
   pool <- colnames(seu)  # current low pool
+  log_rows <- list()     # per round x resolution x cluster decision trace
 
   if (!"pca" %in% names(seu@reductions)) {
     warning("No pca reduction in ", sample_id, "; cannot cluster — all cells -> low.")
@@ -186,18 +226,37 @@ split_hypoxia_by_clusters <- function(hypoxia_seu_path,
         sub <- Seurat::FindClusters(sub, graph.name = paste0(da, "_snn"),
                                     resolution = res, verbose = FALSE)
         sub@meta.data[[grp]] <- sub$seurat_clusters
-        hyp_cl <- identify_hypoxia_clusters(
+        det <- identify_hypoxia_clusters(
           sub, grp, hypoxia_genes = hypoxia_genes, min_markers = min_markers,
-          top_n = top_n, score_quantile = score_quantile)
-        if (length(hyp_cl) > 0) {
-          cells_res <- colnames(sub)[as.character(sub@meta.data[[grp]]) %in% hyp_cl]
-          hyp_cells <- union(hyp_cells, cells_res)
+          top_n = top_n, score_quantile = score_quantile, return_detail = TRUE)
+        if (is.data.frame(det) && nrow(det) > 0) {
+          det <- cbind(sample_id = sample_id, round = round, resolution = res,
+                       pool_n = n_cells, det, stringsAsFactors = FALSE)
+          log_rows[[length(log_rows) + 1]] <- det
+          hyp_cl <- as.character(det$cluster[det$flagged])
+          if (length(hyp_cl) > 0) {
+            cells_res <- colnames(sub)[as.character(sub@meta.data[[grp]]) %in% hyp_cl]
+            hyp_cells <- union(hyp_cells, cells_res)
+          }
         }
       }
       if (length(hyp_cells) == 0) break
       seu$hypoxia_round[colnames(seu) %in% hyp_cells] <- round
       pool <- setdiff(pool, hyp_cells)
     }
+  }
+
+  # Per-sample decision log: round x resolution x cluster, with the rule that
+  # flagged each cluster (marker / score / both / none) and the cell counts.
+  if (length(log_rows) > 0) {
+    tryCatch({
+      fs::dir_create("results/hypoxia_cluster_split")
+      log_df <- dplyr::bind_rows(log_rows)
+      readr::write_csv(
+        log_df,
+        glue::glue("results/hypoxia_cluster_split/{sample_id}_hypoxia_split_log.csv"))
+    }, error = function(e) warning("Failed to write split log for ", sample_id,
+                                   ": ", conditionMessage(e)))
   }
 
   seu$hypoxia_partition <- ifelse(is.na(seu$hypoxia_round), "low", "high")
