@@ -273,14 +273,24 @@ split_hypoxia_by_clusters <- function(hypoxia_seu_path,
                       hypoxia_seu_path)
   add_hash_metadata(labeled_path, seu = seu)
 
-  low_path <- subset_seu_by_expression(
-    labeled_path, run_hypoxia_clustering = TRUE,
-    hypoxia_expr = "hypoxia_partition == 'low'",
-    slug = "hypoxia_low", assay = low_assay)
-  high_path <- subset_seu_by_expression(
-    labeled_path, run_hypoxia_clustering = TRUE,
-    hypoxia_expr = "hypoxia_partition == 'high'",
-    slug = "hypoxia_high", assay = high_assay)
+  low_path <- tryCatch(
+    subset_seu_by_expression(
+      labeled_path, run_hypoxia_clustering = TRUE,
+      hypoxia_expr = "hypoxia_partition == 'low'",
+      slug = "hypoxia_low", assay = low_assay),
+    error = function(e) {
+      warning(sample_id, " low partition failed: ", conditionMessage(e))
+      NA_character_
+    })
+  high_path <- tryCatch(
+    subset_seu_by_expression(
+      labeled_path, run_hypoxia_clustering = TRUE,
+      hypoxia_expr = "hypoxia_partition == 'high'",
+      slug = "hypoxia_high", assay = high_assay),
+    error = function(e) {
+      warning(sample_id, " high partition failed: ", conditionMessage(e))
+      NA_character_
+    })
 
   c(low = low_path, high = high_path)
 }
