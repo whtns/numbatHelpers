@@ -112,17 +112,75 @@ select_genes_to_plot <- function(seu, direction, mygenes, max_genes = 15, scna_o
 #' @return Function result
 #' @export
 make_table_s01 <- function(study_cell_stats, path = "doc/table_s01.csv"){
-	study_cell_stats |> 
-		dplyr::group_by(study, sample_id) |> 
+	study_cell_stats |>
+		dplyr::group_by(study, sample_id) |>
 		dplyr::summarize(
 			mean_umi = mean(nCount_gene),
 			mean_genes_detected = mean(nFeature_gene),
 			mean_percent_mt = mean(percent.mt),
-		) |> 
-		write_csv(path) |> 
-		identity() 
-	
+		) |>
+		write_csv(path) |>
+		identity()
+
 	return(path)
+}
+
+#' Build per-sample exclusion and SCNA-suitability table
+#'
+#' One row per sample with exclusion_reason and suitable_Xq columns.
+#' exclusion_reason priority: normal_control > bad_qc > no_diploid_clone >
+#'   no_scna_status > retained.
+#' suitable_Xq is TRUE if the sample appears in rb_scna_samples[["Xq"]],
+#' regardless of exclusion_reason (so a bad_qc sample that was still included
+#' in an SCNA analysis will show suitable = TRUE).
+#'
+#' @param study_cell_stats Data frame from collect_study_metadata() (per-cell rows)
+#' @param excluded_samples Character vector from the excluded_samples pipeline target
+#' @param rb_scna_samples Named list from the rb_scna_samples pipeline target
+#' @param path Output CSV path
+#' @return path (invisibly)
+#' @export
+make_sample_exclusion_table <- function(study_cell_stats,
+                                        excluded_samples,
+                                        rb_scna_samples,
+                                        path = "results/table_sample_exclusion.csv") {
+
+  normal_ctrl_ids <- c("SRX10031193", "SRX10031194")
+
+  # Same lists as plot_study_metadata; SRX11133587 omitted from bad_scna because
+  # it is already captured by the excluded_samples (no diploid clone) check.
+  bad_qc_ids <- c(
+    "SRX10031191", "SRX10031192",
+    "SRX11133591", "SRX11133590", "SRX11133589", "SRX11133586",
+    "SRX14116948", "SRX14116946", "SRX14116944"
+  )
+
+  bad_scna_ids <- c(
+    "SRX11133588", "SRX11133585",
+    "SRX14116945",
+    "SRX10264517", "SRX10264518", "SRX10264521", "SRX10264522",
+    "SRX22868104", "SRX22868103"
+  )
+
+  study_cell_stats |>
+    dplyr::group_by(study, sample_id) |>
+    dplyr::summarize(n_cells = dplyr::n(), .groups = "drop") |>
+    dplyr::mutate(
+      exclusion_reason = dplyr::case_when(
+        sample_id %in% normal_ctrl_ids ~ "normal_control",
+        sample_id %in% bad_qc_ids      ~ "bad_qc",
+        sample_id %in% excluded_samples ~ "no_diploid_clone",
+        sample_id %in% bad_scna_ids    ~ "no_scna_status",
+        TRUE                            ~ "retained"
+      ),
+      suitable_1q  = sample_id %in% rb_scna_samples[["1q"]],
+      suitable_2p  = sample_id %in% rb_scna_samples[["2p"]],
+      suitable_6p  = sample_id %in% rb_scna_samples[["6p"]],
+      suitable_16q = sample_id %in% rb_scna_samples[["16q"]]
+    ) |>
+    readr::write_csv(path)
+
+  return(path)
 }
 
 #' Create a plot visualization
