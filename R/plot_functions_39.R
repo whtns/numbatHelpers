@@ -9,14 +9,12 @@
 # - repeated_file_reads: Cache file reads to avoid redundant I/O
 # - long_pipe_chain: Consider breaking into intermediate variables for readability and debugging
 
-plot_study_metadata <- function(study_cell_stats, ...) {
-  
-  
+plot_study_metadata <- function(study_cell_stats, normal_ctrl_samples, ...) {
+
+
   # study_cell_stats <- read_csv("results/study_cell_stats.csv")
 
-  normal_ctrl_samples <- unlist(list(
-    "collin" = c("SRX10031193", "SRX10031194")
-  ))
+  normal_ctrl_samples <- unlist(normal_ctrl_samples)
 
   bad_qc_sample_ids <- list(
     "collin" = c("SRX10031191", "SRX10031192"),

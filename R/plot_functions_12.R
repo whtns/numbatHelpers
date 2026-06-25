@@ -142,10 +142,11 @@ make_table_s01 <- function(study_cell_stats, path = "doc/table_s01.csv"){
 #' @export
 make_sample_exclusion_table <- function(study_cell_stats,
                                         excluded_samples,
+                                        normal_ctrl_samples,
                                         rb_scna_samples,
                                         path = "results/table_sample_exclusion.csv") {
 
-  normal_ctrl_ids <- c("SRX10031193", "SRX10031194")
+  normal_ctrl_ids <- unlist(normal_ctrl_samples)
 
   # Same lists as plot_study_metadata; SRX11133587 omitted from bad_scna because
   # it is already captured by the excluded_samples (no diploid clone) check.
@@ -162,16 +163,27 @@ make_sample_exclusion_table <- function(study_cell_stats,
     "SRX22868104", "SRX22868103"
   )
 
-  study_cell_stats |>
+  per_sample <- study_cell_stats |>
     dplyr::group_by(study, sample_id) |>
-    dplyr::summarize(n_cells = dplyr::n(), .groups = "drop") |>
+    dplyr::summarize(n_cells = dplyr::n(), .groups = "drop")
+
+  # Any normal control not in study_cell_stats (e.g. failed Seurat processing)
+  # gets a row with n_cells = NA so the table is complete.
+  missing_ctrls <- normal_ctrl_samples |>
+    tibble::enframe("study", "sample_id") |>
+    tidyr::unnest("sample_id") |>
+    dplyr::filter(!sample_id %in% per_sample$sample_id) |>
+    dplyr::mutate(n_cells = NA_integer_)
+
+  per_sample |>
+    dplyr::bind_rows(missing_ctrls) |>
     dplyr::mutate(
       exclusion_reason = dplyr::case_when(
-        sample_id %in% normal_ctrl_ids ~ "normal_control",
-        sample_id %in% bad_qc_ids      ~ "bad_qc",
+        sample_id %in% normal_ctrl_ids  ~ "normal_control",
+        sample_id %in% bad_qc_ids       ~ "bad_qc",
         sample_id %in% excluded_samples ~ "no_diploid_clone",
-        sample_id %in% bad_scna_ids    ~ "no_scna_status",
-        TRUE                            ~ "retained"
+        sample_id %in% bad_scna_ids     ~ "no_scna_status",
+        TRUE                             ~ "retained"
       ),
       suitable_1q  = sample_id %in% rb_scna_samples[["1q"]],
       suitable_2p  = sample_id %in% rb_scna_samples[["2p"]],
