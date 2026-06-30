@@ -9,8 +9,8 @@
 #   1. low_qual : rank-1 marker is mitochondrial (MT-*)
 #   2. G2M      : >= 3 of top-`top_n` markers are cell-cycle genes
 #   3. HSP      : >= 2 of top-`top_n` markers are heat-shock genes
-#   4. cone     : >= 2 of top-`top_n` markers are cone-specific genes
-#   5. rod      : >= 2 of top-`top_n` markers are rod-specific genes
+#   4. cone     : >= 3 of top-`top_n` markers are cone-specific genes
+#   5. rod      : >= 3 of top-`top_n` markers are rod-specific genes
 #   6. MALAT1   : MALAT1 is among the top-`malat1_rank_max` markers
 #   7. <gene>   : otherwise the rank-1 marker gene verbatim
 
@@ -62,11 +62,11 @@ classify_cluster_abbreviation <- function(top_genes, malat1_rank_max = 5, top_n 
     return(list(abbrev = "HSP", rule = "heat_shock",
                 matched = paste(hit(sets$heat_shock), collapse = ",")))
   }
-  if (length(hit(sets$cone)) >= 2) {
+  if (length(hit(sets$cone)) >= 3) {
     return(list(abbrev = "cone", rule = "cone",
                 matched = paste(hit(sets$cone), collapse = ",")))
   }
-  if (length(hit(sets$rod)) >= 2) {
+  if (length(hit(sets$rod)) >= 3) {
     return(list(abbrev = "rod", rule = "rod",
                 matched = paste(hit(sets$rod), collapse = ",")))
   }

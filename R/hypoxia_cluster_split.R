@@ -7,10 +7,13 @@
 # per-cluster means. Hits are unioned across resolutions.
 #
 # This scheme deliberately does NOT depend on hypoxia marker-gene presence:
-# a cluster is "high" only if its mean hypoxia_score is an outlier (Tukey upper
-# fence, Q3 + 1.5*IQR). The marker-overlap columns (n_hyp_markers,
-# matched_genes) and the top-5 marker genes per cluster are still reported in
-# the per-sample log for interpretation, but they do not drive the split.
+# a cluster is "high" only if its mean hypoxia_score is a high-side outlier by a
+# robust-z rule, median(means) + 3*MAD. (Robust z is used instead of a Tukey
+# fence because, when 2+ of a sample's few clusters are hypoxic, those clusters
+# inflate Q3 and the fence rises above them; median/MAD track the bulk.) The
+# marker-overlap columns (n_hyp_markers, matched_genes) and the top-5 marker
+# genes per cluster are still reported in the per-sample log for interpretation,
+# but they do not drive the split.
 # See doc/hypoxia_split_outlier_rule.md for the rule and alternatives.
 
 # snoRNA-host genes (the ZFAS1/GAS5 family that drives these clusters) plus
@@ -24,10 +27,14 @@
 #' Identify outlier-hypoxia clusters at one grouping
 #'
 #' A cluster is flagged hypoxia if its mean `hypoxia_score` is a high-side
-#' outlier among the per-cluster means: `mean_score > Q3 + 1.5 * IQR` (Tukey
-#' upper fence). Flagging is independent of hypoxia marker-gene presence; the
-#' marker columns (`top_markers`, `n_hyp_markers`, `matched_genes`) are reported
-#' for interpretation only.
+#' outlier among the per-cluster means, using a robust z rule:
+#' `mean_score > median(means) + mad_k * mad(means)` (MAD scaled to be
+#' SD-consistent). This is robust to several elevated clusters because the
+#' median and MAD are dominated by the bulk majority — unlike a Tukey fence,
+#' whose Q3 is inflated by the very clusters it should catch. Flagging is
+#' independent of hypoxia marker-gene presence; the marker columns
+#' (`top_markers`, `n_hyp_markers`, `matched_genes`) are reported for
+#' interpretation only.
 #'
 #' @param seu Seurat object with the grouping column `grp` and a `hypoxia_score`
 #'   metadata column.
@@ -39,6 +46,7 @@
 #'   hypoxia-gene overlap columns.
 #' @param top_markers_n Number of top markers per cluster reported in the
 #'   `top_markers` column (default 5).
+#' @param mad_k Robust-z multiplier for the outlier threshold (default 3).
 #' @param return_detail If `TRUE`, return the full per-cluster decision table
 #'   (one row per cluster) instead of just the flagged cluster ids.
 #' @return By default a character vector of outlier cluster ids (possibly
@@ -50,6 +58,7 @@
 identify_hypoxia_clusters <- function(seu, grp,
                                       hypoxia_genes = .hypoxia_marker_set,
                                       top_n = 20, top_markers_n = 5,
+                                      mad_k = 3,
                                       return_detail = FALSE) {
   empty <- if (return_detail) {
     data.frame(cluster = character(0), n_cells = integer(0),
@@ -105,12 +114,16 @@ identify_hypoxia_clusters <- function(seu, grp,
       mean_score    = unname(as.numeric(cl_mean[clusters])),
       stringsAsFactors = FALSE)
 
-    # Tukey upper fence over the per-cluster means: flag high-side outliers.
-    qs    <- stats::quantile(detail$mean_score, c(0.25, 0.75), na.rm = TRUE)
-    fence <- as.numeric(qs[[2]] + 1.5 * (qs[[2]] - qs[[1]]))
+    # Robust-z (median + mad_k * MAD) over the per-cluster means: flag high-side
+    # outliers. Robust to several elevated clusters because median/MAD track the
+    # bulk majority. mad() scales by 1.4826 (SD-consistent). A zero/NA MAD means
+    # no usable spread (e.g. <= 2 clusters or many identical means) -> flag none.
+    med   <- stats::median(detail$mean_score, na.rm = TRUE)
+    md    <- stats::mad(detail$mean_score, na.rm = TRUE)
+    fence <- as.numeric(med + mad_k * md)
     detail$outlier_fence <- fence
-    detail$is_outlier    <- !is.na(detail$mean_score) & !is.na(fence) &
-                            detail$mean_score > fence
+    detail$is_outlier    <- !is.na(detail$mean_score) & is.finite(fence) &
+                            md > 0 & detail$mean_score > fence
     detail$flagged       <- detail$is_outlier
 
     if (return_detail) detail else as.character(detail$cluster[detail$flagged])
@@ -174,7 +187,7 @@ identify_hypoxia_clusters <- function(seu, grp,
 #' @param resolutions Louvain resolutions to cluster at (hits unioned across
 #'   them).
 #' @param n_iter Number of peeling rounds (default 1 — single round).
-#' @param hypoxia_genes,top_n,top_markers_n Passed to
+#' @param hypoxia_genes,top_n,top_markers_n,mad_k Passed to
 #'   [identify_hypoxia_clusters()].
 #' @param split_assay Assay used for the partition clustering (default "gene").
 #' @param low_assay,high_assay Assays passed to [subset_seu_by_expression()]
@@ -188,7 +201,7 @@ split_hypoxia_by_clusters <- function(hypoxia_seu_path,
                                       resolutions = c(0.2, 0.4, 0.6),
                                       n_iter = 1,
                                       hypoxia_genes = .hypoxia_marker_set,
-                                      top_n = 20, top_markers_n = 5,
+                                      top_n = 20, top_markers_n = 5, mad_k = 3,
                                       split_assay = "gene",
                                       low_assay = "gene", high_assay = "SCT",
                                       write_qc = TRUE) {
@@ -236,7 +249,7 @@ split_hypoxia_by_clusters <- function(hypoxia_seu_path,
         sub@meta.data[[grp]] <- sub$seurat_clusters
         det <- identify_hypoxia_clusters(
           sub, grp, hypoxia_genes = hypoxia_genes, top_n = top_n,
-          top_markers_n = top_markers_n, return_detail = TRUE)
+          top_markers_n = top_markers_n, mad_k = mad_k, return_detail = TRUE)
         if (is.data.frame(det) && nrow(det) > 0) {
           det <- cbind(sample_id = sample_id, round = round, resolution = res,
                        pool_n = n_cells, det, stringsAsFactors = FALSE)
@@ -255,7 +268,8 @@ split_hypoxia_by_clusters <- function(hypoxia_seu_path,
   }
 
   # Per-sample decision log: round x resolution x cluster, with the top-5 marker
-  # genes, mean hypoxia_score, the Tukey outlier fence, and the is_outlier flag.
+  # genes, mean hypoxia_score, the robust-z (median+3*MAD) outlier_fence, and the
+  # is_outlier flag.
   if (length(log_rows) > 0) {
     tryCatch({
       fs::dir_create("results/hypoxia_cluster_split")
