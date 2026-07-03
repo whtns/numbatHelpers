@@ -714,9 +714,15 @@ plot_effect_of_filtering <- function(unfiltered_seu_path, filtered_seu_path = NU
         hypoxia_plot_list[[2]] <- p_hypoxia_score
       }
 
-      p_low_hypoxia_scna <- DimPlot(
-        low_hypoxia_seu, group.by = "scna", reduction = "umap"
-      ) + labs(title = "low hypoxia seu (scna)")
+      # Gradient FeaturePlot of hypoxia_score (not a categorical scna DimPlot):
+      # shows the residual hypoxia signal across the retained low-hypoxia cells.
+      p_low_hypoxia_scna <- if ("hypoxia_score" %in% colnames(low_hypoxia_seu@meta.data)) {
+        FeaturePlot(low_hypoxia_seu, features = "hypoxia_score", reduction = "umap") +
+          labs(title = "low hypoxia seu (hypoxia_score)")
+      } else {
+        DimPlot(low_hypoxia_seu, group.by = "scna", reduction = "umap") +
+          labs(title = "low hypoxia seu (scna)")
+      }
       hypoxia_plot_list[[length(hypoxia_plot_list) + 1]] <- p_low_hypoxia_scna
 
       p_low_hypoxia_clusters <- DimPlot(
@@ -768,9 +774,15 @@ plot_effect_of_filtering <- function(unfiltered_seu_path, filtered_seu_path = NU
         hypoxia_plot_list_hh[[2]] <- p_hypoxia_score_hh
       }
 
-      p_high_hypoxia_scna <- DimPlot(
-        high_hypoxia_seu, group.by = "scna", reduction = "umap"
-      ) + labs(title = "high hypoxia seu (scna)")
+      # Gradient FeaturePlot of hypoxia_score (not a categorical scna DimPlot):
+      # shows the residual hypoxia signal across the retained high-hypoxia cells.
+      p_high_hypoxia_scna <- if ("hypoxia_score" %in% colnames(high_hypoxia_seu@meta.data)) {
+        FeaturePlot(high_hypoxia_seu, features = "hypoxia_score", reduction = "umap") +
+          labs(title = "high hypoxia seu (hypoxia_score)")
+      } else {
+        DimPlot(high_hypoxia_seu, group.by = "scna", reduction = "umap") +
+          labs(title = "high hypoxia seu (scna)")
+      }
       hypoxia_plot_list_hh[[length(hypoxia_plot_list_hh) + 1]] <- p_high_hypoxia_scna
 
       p_high_hypoxia_clusters <- DimPlot(
