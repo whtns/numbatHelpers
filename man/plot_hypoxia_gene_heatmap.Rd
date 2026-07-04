@@ -7,7 +7,7 @@
 plot_hypoxia_gene_heatmap(
   seu_path,
   group.by = "gene_snn_res.0.2",
-  n_genes = 50
+  n_genes = 30
 )
 }
 \arguments{

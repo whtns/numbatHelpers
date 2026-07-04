@@ -23,6 +23,7 @@ collate_sample_summary(
   unfiltered_numbat_bulk_clones,
   filtered_numbat_bulk_clones,
   low_hypoxia_numbat_bulk_clones,
+  filtering_cell_counts_table = NULL,
   density = 300
 )
 }

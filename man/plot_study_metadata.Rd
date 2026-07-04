@@ -4,7 +4,7 @@
 \alias{plot_study_metadata}
 \title{Create a plot visualization}
 \usage{
-plot_study_metadata(study_cell_stats, ...)
+plot_study_metadata(study_cell_stats, normal_ctrl_samples, ...)
 }
 \arguments{
 \item{study_cell_stats}{Cell identifiers or information}

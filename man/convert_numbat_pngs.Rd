@@ -4,7 +4,7 @@
 \alias{convert_numbat_pngs}
 \title{Perform numbat-related analysis}
 \usage{
-convert_numbat_pngs(numbat_rds_file)
+convert_numbat_pngs(numbat_rds_file, n_sample = 2000, lim = 0.8)
 }
 \arguments{
 \item{numbat_rds_file}{File path}
