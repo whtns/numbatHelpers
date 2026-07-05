@@ -6,14 +6,7 @@
 \usage{
 read_liu_lu_supp_tables()
 }
-\arguments{
-\item{excel_file}{File path}
-
-\item{skip}{Parameter for skip}
-}
 \value{
-Loaded data object
-
 Loaded data object
 }
 \description{
