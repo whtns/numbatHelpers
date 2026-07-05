@@ -743,22 +743,26 @@ run_hypoxia_clustering = FALSE, cluster_resolutions = seq(0.2, 1, by = 0.2)) {
     seu@meta.data <- seu_meta[rownames(seu@meta.data), ]
 
     seu <- seu[, seu$phase_level %in% kept_phases]
-    seu <- if (length(unique(seu@meta.data$clusters)) < 2L) {
-      warning("Fewer than 2 clusters in ", seu_path, "; skipping marker finding.")
-      seu
-    } else {
-      tryCatch(
-        find_all_markers(seu, metavar = "clusters", seurat_assay = "SCT"),
-        error = function(e) {
-          if (grepl("JoinLayers", conditionMessage(e), fixed = TRUE)) {
-            warning("SCT marker JoinLayers failed; using stash_marker_features fallback.")
-            seu@misc$markers[["clusters"]] <- seuratTools:::stash_marker_features("clusters", seu, seurat_assay = "SCT")
-            return(seu)
-          }
-          stop(e)
-        }
-      )
+    # A marker heatmap needs >=2 clusters to find markers between. Degenerate
+    # low/high-hypoxia subsets can collapse to <2; skip the whole collage for
+    # them (returns NA_character_, same convention as the is.na(seu_path) guard
+    # above) instead of proceeding to an inevitable ComplexHeatmap/ggplot failure.
+    if (length(unique(seu@meta.data$clusters)) < 2L) {
+      warning("Fewer than 2 clusters in ", seu_path,
+              "; skipping marker heatmap collage.")
+      return(NA_character_)
     }
+    seu <- tryCatch(
+      find_all_markers(seu, metavar = "clusters", seurat_assay = "SCT"),
+      error = function(e) {
+        if (grepl("JoinLayers", conditionMessage(e), fixed = TRUE)) {
+          warning("SCT marker JoinLayers failed; using stash_marker_features fallback.")
+          seu@misc$markers[["clusters"]] <- seuratTools:::stash_marker_features("clusters", seu, seurat_assay = "SCT")
+          return(seu)
+        }
+        stop(e)
+      }
+    )
 
     seu@meta.data$clusters <- forcats::fct_drop(seu@meta.data$clusters)
 
@@ -827,6 +831,14 @@ run_hypoxia_clustering = FALSE, cluster_resolutions = seq(0.2, 1, by = 0.2)) {
     # select(Gene.Name, term) %>%
     dplyr::mutate(term = replace_na(term, "")) %>%
     dplyr::distinct(Gene.Name, .keep_all = TRUE)
+
+  # No marker features survived the VariableFeatures/logFC filters -> a 0-row
+  # heatmap makes ComplexHeatmap set row_order to NULL and as.ggplot() yield a
+  # non-plot, which then fails `+ labs()`. Skip the collage for this sample.
+  if (is.null(heatmap_features) || nrow(heatmap_features) < 1L) {
+    warning("No marker heatmap features for ", seu_path, "; skipping collage.")
+    return(NA_character_)
+  }
 
   row_ha <- ComplexHeatmap::rowAnnotation(term = rev(heatmap_features$term))
 
