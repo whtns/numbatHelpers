@@ -244,6 +244,7 @@ plot_seu_marker_heatmap_by_scna <- function(seu_path = NULL, cluster_order = NUL
   plot_path <- if(!tmp_plot_path){
     glue("results/{file_slug}_{scna_of_interest}_heatmap_phase_scatter_patchwork.pdf")
   } else {
+    fs::dir_create("tmp")  # tempfile() does not create the tmpdir; ggsave errors "Cannot find directory 'tmp'"
     tempfile(tmpdir = "tmp", fileext = ".pdf")
   }
 
@@ -980,6 +981,7 @@ run_hypoxia_clustering = FALSE, cluster_resolutions = seq(0.2, 1, by = 0.2)) {
   plot_path <- if(!tmp_plot_path){
     glue("results/{file_slug}_{label}heatmap_phase_scatter_patchwork.pdf")
   } else {
+    fs::dir_create("tmp")  # tempfile() does not create the tmpdir; ggsave errors "Cannot find directory 'tmp'"
     tempfile(tmpdir = "tmp", fileext = ".pdf")
   }
 
@@ -1040,6 +1042,7 @@ plot_hypoxia_score <- function(seu_path, threshold = 0.5) {
         geom_point() + 
         geom_hline(yintercept = threshold, linetype = "dashed", color = "red") +
         labs(title = sample_id, x = "Cells ordered by hypoxia score", y = "Hypoxia score")
+    fs::dir_create("tmp")  # tempfile() does not create the tmpdir
     out <- tempfile(tmpdir = "tmp", fileext = ".pdf")
     ggplot2::ggsave(filename = out, plot = p, width = 8, height = 3)
     out
