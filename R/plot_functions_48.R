@@ -35,6 +35,16 @@ save_cc_space_plot_from_path <- function(seu_path, clone_simplifications, label 
 #' @return ggplot2 plot object
 #' @export
 plot_clone_tree <- function(clone_df, tumor_id, nb_path, clone_simplifications = NULL, sample_id = NULL, show_distance = FALSE, ...) {
+  # Accept a Seurat object as well as a cell/clone_opt data frame. Several callers
+  # (e.g. plot_seu_marker_heatmap) pass `seu` directly; colnames(seu) are cell
+  # barcodes, so the clone_opt check below always failed and returned NULL, which
+  # then crashed the collage's wrap_plots() with "Only know how to add
+  # <ggplot>/<grob> objects". Extract the metadata table (cell + clone_opt) here,
+  # normalising the "." -> "-" barcode format numbat's clone_post uses.
+  if (inherits(clone_df, "Seurat")) {
+    clone_df <- clone_df@meta.data %>% tibble::rownames_to_column("cell")
+    clone_df$cell <- stringr::str_replace(clone_df$cell, "\\.", "-")
+  }
   if (!"clone_opt" %in% colnames(clone_df)) {
     warning("clone_opt not found for ", tumor_id, "; skipping clone tree")
     return(NULL)

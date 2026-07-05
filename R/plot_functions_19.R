@@ -928,15 +928,20 @@ run_hypoxia_clustering = FALSE, cluster_resolutions = seq(0.2, 1, by = 0.2)) {
     # map(~(.x + theme(legend.position = "bottom"))) %>%
     wrap_plots(ncol = 1)
 
-  if (!is.null(nb_path)) {
-    clone_tree_plot <-
-      plot_clone_tree(seu, tumor_id, nb_path, clone_simplifications, sample_id = sample_id, legend = FALSE, horizontal = TRUE)
+  clone_tree_plot <- if (!is.null(nb_path)) {
+    plot_clone_tree(seu, tumor_id, nb_path, clone_simplifications, sample_id = sample_id, legend = FALSE, horizontal = TRUE)
+  } else {
+    NULL
+  }
 
+  # Only use the clone-tree layout if we actually got a plot back; otherwise fall
+  # through to the no-tree layout rather than feeding a NULL panel to wrap_plots().
+  if (!is.null(clone_tree_plot)) {
     collage_plots <- list(
-    	"A" = seu_heatmap, 
-    	"B" = facet_cell_cycle_plot, 
-    	"C" = umap_plots, 
-    	"D" = clone_distribution_plot, 
+    	"A" = seu_heatmap,
+    	"B" = facet_cell_cycle_plot,
+    	"C" = umap_plots,
+    	"D" = clone_distribution_plot,
     	"E" = clone_tree_plot)
 
     layout <- "
