@@ -66,7 +66,14 @@ find_diffex_clones_in_phase <- function(seu_path, phase = "g1", scna_of_interest
 
   mynb <- numbat_rds_files[[tumor_id]]
 
-  seu <- readRDS(glue("output/seurat/{sample_id}_filtered_seu.rds"))
+  # Some samples in the phase-subset input lack a standalone per-sample filtered
+  # seu on disk; skip rather than crash readRDS with "cannot open the connection".
+  seu_file <- glue("output/seurat/{sample_id}_filtered_seu.rds")
+  if (!fs::file_exists(seu_file)) {
+    warning("Missing filtered seu for ", sample_id, " (", seu_file, "); skipping phase diffex.")
+    return(NULL)
+  }
+  seu <- readRDS(seu_file)
 
   seu <- seu[, seu$phase_level %in% phase]
 

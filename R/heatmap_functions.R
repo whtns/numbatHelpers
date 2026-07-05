@@ -197,12 +197,20 @@ plot_hypoxia_gene_heatmap <- function(seu_path, group.by = "gene_snn_res.0.2", n
   # This selects genes that best discriminate clusters, not just high-variance cells.
   if (length(available_genes) > n_genes) {
     gene_mat <- Seurat::GetAssayData(seu, assay = "gene", layer = "data")[available_genes, , drop = FALSE]
-    cluster_ids <- seu@meta.data[[group.by]]
-    cluster_means <- sapply(levels(factor(cluster_ids)), function(cl) {
+    # drop empty cluster levels: a 0-cell cluster yields NaN between-cluster
+    # variance, which leaves NA gene names and later crashes DotPlot with
+    # "replacement has N rows, data has 0".
+    cluster_ids <- droplevels(as.factor(seu@meta.data[[group.by]]))
+    cluster_means <- sapply(levels(cluster_ids), function(cl) {
       rowMeans(gene_mat[, cluster_ids == cl, drop = FALSE])
     })
     between_cluster_var <- apply(cluster_means, 1, var)
-    available_genes <- names(sort(between_cluster_var, decreasing = TRUE))[seq_len(n_genes)]
+    available_genes <- utils::head(names(sort(between_cluster_var, decreasing = TRUE)), n_genes)
+  }
+  available_genes <- available_genes[!is.na(available_genes)]
+  if (length(available_genes) == 0) {
+    warning("No usable hypoxia genes after ranking in: ", seu_path)
+    return(NA_character_)
   }
 
   # Panel 1: DotPlot — average expression + % expressing per cluster, genes on Y axis
