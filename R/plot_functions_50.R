@@ -1,27 +1,21 @@
 # Plot Functions (149)
 
-#' Load or read data from file
-#'
-#' @return Loaded data object
-#' @export
-# Performance optimizations applied:
-# - long_pipe_chain: Consider breaking into intermediate variables for readability and debugging
-# - rownames_round_trip: Avoid unnecessary rownames conversions - keep as column when possible
-
-read_liu_lu_supp_tables <- function() {
-  
-#' Load or read data from file
+#' Read every sheet of an Excel file into a named list of tibbles
 #'
 #' @param excel_file File path
-#' @param skip Parameter for skip
-#' @return Loaded data object
+#' @param skip Number of header rows to skip in each sheet
+#' @return Named list of tibbles, one per worksheet
 #' @export
 myreadxl <- function(excel_file, skip = 0) {
-    sheets <- readxl::excel_sheets(excel_file) %>% set_names(.)
+  sheets <- readxl::excel_sheets(excel_file) %>% set_names(.)
+  map(sheets, ~ readxl::read_excel(excel_file, .x, skip = skip))
+}
 
-    map(sheets, ~ readxl::read_excel(excel_file, .x, skip = skip))
-  }
-
+#' Load or read data from file
+#'
+#' @return Loaded data object
+#' @export
+read_liu_lu_supp_tables <- function() {
   liu_supp_tables <- "data/liu_lu_supp_data/supp_table_4.xlsx" %>%
     myreadxl(skip = 1) %>%
     map(janitor::clean_names) %>%
