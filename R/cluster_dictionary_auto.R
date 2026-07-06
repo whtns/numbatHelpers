@@ -122,11 +122,14 @@ auto_phase_level <- function(seu, group.by, top_n = 10, marker_min = 2,
   mean_s <- if (has_scores)
     vapply(uniq, function(cl) mean(md$S.Score[clusters == cl], na.rm = TRUE), numeric(1)) else
     setNames(rep(NA_real_, length(uniq)), uniq)
+  # Map Seurat Phase onto the existing phase_levels vocabulary (G2M -> g2_m).
+  phase_map <- c(G1 = "g1", S = "s", G2M = "g2_m")
   modal_phase <- vapply(uniq, function(cl) {
     if (!has_phase) return(NA_character_)
     p <- md$Phase[clusters == cl]; p <- p[!is.na(p)]
     if (length(p) == 0) return(NA_character_)
-    tolower(names(sort(table(p), decreasing = TRUE))[1])
+    top <- names(sort(table(p), decreasing = TRUE))[1]
+    unname(phase_map[top] %||% tolower(top))
   }, character(1))
 
   # s_star fence: high-side robust-z outlier of per-cluster mean S.Score.
