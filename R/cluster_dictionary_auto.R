@@ -198,6 +198,7 @@ assign_auto_phase_clusters <- function(seu, group.by,
   ord <- order(meta$phase_level,
                suppressWarnings(as.integer(as.character(meta[[group.by]]))))
   meta <- meta[ord, ]
+  rownames(meta) <- NULL  # base [ord,] permutes rownames; column_to_rownames needs none
   meta$clusters <- factor(meta$clusters, levels = unique(meta$clusters))
   meta <- tibble::column_to_rownames(meta, "cell")
   seu@meta.data <- meta[rownames(seu@meta.data), ]
