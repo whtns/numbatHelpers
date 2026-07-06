@@ -365,27 +365,9 @@ plot_fig_04_05_panels <- function(seu_path = NULL, cluster_order = NULL, nb_path
 			
 			group.by <- unique(single_cluster_order$resolution)
 			
-			seu@meta.data$clusters <- seu@meta.data[[group.by]]
-			
-			seu_meta <- seu@meta.data %>%
-				tibble::rownames_to_column("cell") %>%
-				dplyr::select(-any_of(c("phase_level", "order"))) %>%
-				dplyr::left_join(single_cluster_order, by = "clusters") %>%
-				dplyr::select(-clusters) %>%
-				dplyr::rename(phase_level = phase) %>%
-				identity()
-			
-			phase_levels <- phase_levels[phase_levels %in% unique(seu_meta$phase_level)]
-			
-			seu_meta <-
-				seu_meta %>%
-				tidyr::unite("clusters", all_of(c("phase_level", group.by)), remove = FALSE) %>%
-				dplyr::arrange(phase_level, order) %>%
-				dplyr::mutate(clusters = factor(clusters, levels = unique(clusters))) %>%
-				tibble::column_to_rownames("cell") %>%
-				identity()
-			
-			seu@meta.data <- seu_meta[rownames(seu@meta.data), ]
+			seu <- assign_auto_phase_clusters(seu, group.by)
+
+			phase_levels <- phase_levels[phase_levels %in% unique(as.character(seu@meta.data$phase_level))]
 			
 			seu <- seu[, seu$phase_level %in% kept_phases]
 			seu <- tryCatch(

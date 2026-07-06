@@ -288,27 +288,9 @@ plot_seu_marker_heatmap_by_scna <- function(seu_path = NULL, cluster_order = NUL
 
       group.by <- unique(single_cluster_order$resolution)
 
-      seu@meta.data$clusters <- seu@meta.data[[group.by]]
+      seu <- assign_auto_phase_clusters(seu, group.by)
 
-      seu_meta <- seu@meta.data %>%
-        tibble::rownames_to_column("cell") %>%
-        dplyr::select(-any_of(c("phase_level", "order"))) %>%
-        dplyr::left_join(single_cluster_order, by = "clusters") %>%
-        dplyr::select(-clusters) %>%
-        dplyr::rename(phase_level = phase) %>%
-        identity()
-
-      phase_levels <- phase_levels[phase_levels %in% unique(seu_meta$phase_level)]
-
-      seu_meta <-
-        seu_meta %>%
-        tidyr::unite("clusters", all_of(c("phase_level", group.by)), remove = FALSE) %>%
-        dplyr::arrange(phase_level, order) %>%
-        dplyr::mutate(clusters = factor(clusters, levels = unique(clusters))) %>%
-        tibble::column_to_rownames("cell") %>%
-        identity()
-
-      seu@meta.data <- seu_meta[rownames(seu@meta.data), ]
+      phase_levels <- phase_levels[phase_levels %in% unique(as.character(seu@meta.data$phase_level))]
 
       seu <- seu[, seu$phase_level %in% kept_phases]
       seu <- tryCatch(
@@ -715,34 +697,14 @@ run_hypoxia_clustering = FALSE, cluster_resolutions = seq(0.2, 1, by = 0.2)) {
   if (!is.null(cluster_order)) {
     group.by <- unique(cluster_order$resolution)
 
-    seu@meta.data$clusters <- seu@meta.data[[group.by]]
-
     # Auto-generate the cell-cycle phase label per cluster from THIS object's own
     # cells (S.Score/G2M.Score/Phase + marker programs), instead of joining the
     # phase assignments from data/scna_cluster_order.csv, which go stale when
     # clustering changes. Emits g1/s/s_star/g2_m/pm/hsp in the existing
-    # phase_levels vocabulary. See auto_phase_level().
-    cluster_phase <- auto_phase_level(seu, group.by)
-    seu@meta.data$phase_level <- unname(
-      cluster_phase[as.character(seu@meta.data[[group.by]])]
-    )
+    # phase_levels vocabulary. See auto_phase_level()/assign_auto_phase_clusters().
+    seu <- assign_auto_phase_clusters(seu, group.by)
 
-    # Cell-cycle-ordered phase priority for arranging the named clusters.
-    phase_order <- c("pm", "g1", "g1_s", "s", "s_star", "s_g2", "g2", "g2_m",
-                     "hsp", "hypoxia", "other")
-    phase_levels <- phase_levels[phase_levels %in% unique(seu@meta.data$phase_level)]
-
-    seu_meta <-
-      seu@meta.data %>%
-      tibble::rownames_to_column("cell") %>%
-      tidyr::unite("clusters", all_of(c("phase_level", group.by)), remove = FALSE) %>%
-      dplyr::mutate(phase_level = factor(phase_level, levels = phase_order)) %>%
-      dplyr::arrange(phase_level, as.integer(as.character(.data[[group.by]]))) %>%
-      dplyr::mutate(clusters = factor(clusters, levels = unique(clusters))) %>%
-      tibble::column_to_rownames("cell") %>%
-      identity()
-
-    seu@meta.data <- seu_meta[rownames(seu@meta.data), ]
+    phase_levels <- phase_levels[phase_levels %in% unique(as.character(seu@meta.data$phase_level))]
 
     seu <- seu[, seu$phase_level %in% kept_phases]
     # A marker heatmap needs >=2 clusters to find markers between. Degenerate

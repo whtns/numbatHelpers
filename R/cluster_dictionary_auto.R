@@ -170,6 +170,40 @@ auto_phase_level <- function(seu, group.by, top_n = 10, marker_min = 2,
   setNames(labels, uniq)
 }
 
+#' Assign auto-generated phase_level and phase-named clusters to a Seurat object
+#'
+#' Shared helper for the plot builders: sets `seu@meta.data$phase_level` from
+#' [auto_phase_level()] at `group.by`, then builds the phase-prefixed `clusters`
+#' factor (e.g. g1_0, g2_m_5, s_star_13, hsp_4) ordered by cell-cycle phase then
+#' cluster number. Replaces the stale-prone join against data/scna_cluster_order.csv.
+#'
+#' @param seu A Seurat object with cell-cycle scores/Phase and a `group.by` column.
+#' @param group.by Cluster metadata column (e.g. "SCT_snn_res.0.6").
+#' @param phase_order Ordering of phase labels for arranging clusters.
+#' @param ... Passed to [auto_phase_level()].
+#' @return `seu` with `phase_level` and factor `clusters` set in meta.data.
+#' @export
+assign_auto_phase_clusters <- function(seu, group.by,
+    phase_order = c("pm","g1","g1_s","s","s_star","s_g2","g2","g2_m","hsp","hypoxia","other"),
+    ...) {
+  seu@meta.data$clusters <- seu@meta.data[[group.by]]
+  cluster_phase <- auto_phase_level(seu, group.by, ...)
+  seu@meta.data$phase_level <- unname(
+    cluster_phase[as.character(seu@meta.data[[group.by]])]
+  )
+  meta <- tibble::rownames_to_column(seu@meta.data, "cell")
+  meta <- tidyr::unite(meta, "clusters",
+                       tidyselect::all_of(c("phase_level", group.by)), remove = FALSE)
+  meta$phase_level <- factor(meta$phase_level, levels = phase_order)
+  ord <- order(meta$phase_level,
+               suppressWarnings(as.integer(as.character(meta[[group.by]]))))
+  meta <- meta[ord, ]
+  meta$clusters <- factor(meta$clusters, levels = unique(meta$clusters))
+  meta <- tibble::column_to_rownames(meta, "cell")
+  seu@meta.data <- meta[rownames(seu@meta.data), ]
+  seu
+}
+
 # Pull gene_snn_res.0.2 top markers per cluster for one sample from the DB.
 .dict_markers_from_db <- function(con, filepath, n_keep = 20) {
   q <- DBI::dbGetQuery(con,
