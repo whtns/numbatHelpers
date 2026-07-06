@@ -15,13 +15,30 @@ load_and_save_hypoxia_score <- function(seu_path) {
 
     if (!all(c("G2M.Score", "S.Score") %in% colnames(seu@meta.data))) {
         message("CC scores missing in ", basename(seu_path), "; running CellCycleScoring.")
-        seu <- tryCatch(
-            Seurat::CellCycleScoring(seu, s.features = cc.genes$s.genes, g2m.features = cc.genes$g2m.genes, set.ident = FALSE),
+        # CellCycleScoring (via AddModuleScore) bins genes by mean expression into
+        # `ctrl` bins; on the default SCT assay too few distinct mean values exist
+        # -> "Insufficient data values to produce N bins", after which these seus
+        # silently fell back to S.Score/G2M.Score = 0 (every cell at the origin in
+        # the cell-cycle facet plots). The full-gene assay ("gene"/"RNA") has the
+        # expression range needed and scores reliably, so score on that and restore
+        # the original default assay. Only fall back to 0 if that also fails.
+        score_assay <- intersect(c("gene", "RNA"), Seurat::Assays(seu))
+        orig_assay <- Seurat::DefaultAssay(seu)
+        seu <- tryCatch({
+            scored <- seu
+            if (length(score_assay) > 0) Seurat::DefaultAssay(scored) <- score_assay[1]
+            scored <- Seurat::CellCycleScoring(
+                scored, s.features = cc.genes$s.genes,
+                g2m.features = cc.genes$g2m.genes, set.ident = FALSE)
+            Seurat::DefaultAssay(scored) <- orig_assay
+            scored
+        },
             error = function(e) {
                 message("CellCycleScoring failed (", e$message, "); setting CC scores to 0.")
                 seu$S.Score <- 0
                 seu$G2M.Score <- 0
                 seu$Phase <- "G1"
+                Seurat::DefaultAssay(seu) <- orig_assay
                 return(seu)
             }
         )
