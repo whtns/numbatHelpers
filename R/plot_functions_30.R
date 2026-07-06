@@ -406,7 +406,7 @@ plot_fig_04_05_panels <- function(seu_path = NULL, cluster_order = NULL, nb_path
 				identity()
 			
 			heatmap_features[["Cluster"]] <-
-				factor(heatmap_features[["Cluster"]], levels = levels(seu_meta$clusters))
+				factor(heatmap_features[["Cluster"]], levels = levels(seu@meta.data$clusters))
 			
 			heatmap_features <-
 				heatmap_features %>%

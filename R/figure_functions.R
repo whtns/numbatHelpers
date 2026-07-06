@@ -253,7 +253,7 @@ plot_figure_collage <- function(seu_path = NULL, cluster_order = NULL, nb_paths 
 				identity()
 
 			heatmap_features[["Cluster"]] <-
-				factor(heatmap_features[["Cluster"]], levels = levels(seu_meta$clusters))
+				factor(heatmap_features[["Cluster"]], levels = levels(seu@meta.data$clusters))
 
 			heatmap_features <-
 				heatmap_features %>%

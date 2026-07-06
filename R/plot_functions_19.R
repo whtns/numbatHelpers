@@ -329,7 +329,7 @@ plot_seu_marker_heatmap_by_scna <- function(seu_path = NULL, cluster_order = NUL
         identity()
 
       heatmap_features[["Cluster"]] <-
-        factor(heatmap_features[["Cluster"]], levels = levels(seu_meta$clusters))
+        factor(heatmap_features[["Cluster"]], levels = levels(seu@meta.data$clusters))
 
       heatmap_features <-
         heatmap_features %>%
@@ -749,7 +749,7 @@ run_hypoxia_clustering = FALSE, cluster_resolutions = seq(0.2, 1, by = 0.2)) {
       identity()
 
     heatmap_features[["Cluster"]] <-
-      factor(heatmap_features[["Cluster"]], levels = levels(seu_meta$clusters))
+      factor(heatmap_features[["Cluster"]], levels = levels(seu@meta.data$clusters))
 
     heatmap_features <-
       heatmap_features %>%
