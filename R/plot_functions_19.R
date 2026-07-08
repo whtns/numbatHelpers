@@ -786,6 +786,16 @@ run_hypoxia_clustering = FALSE, cluster_resolutions = seq(0.2, 1, by = 0.2)) {
   seu$scna <- factor(seu$scna)
   levels(seu$scna)[1] <- "none"
 
+  # Display numbat clones (clone_opt) rather than the simplified SCNA labels,
+  # which are frequently blank for these subsets. NA / unassigned cells -> "none".
+  if ("clone_opt" %in% colnames(seu@meta.data)) {
+    .clone <- as.character(seu$clone_opt)
+    .clone[is.na(.clone) | .clone == ""] <- "none"
+    seu$clone <- factor(.clone)
+  } else {
+    seu$clone <- factor("none")
+  }
+
   giotti_genes <- read_giotti_genes()
 
   heatmap_features <-
@@ -806,7 +816,7 @@ run_hypoxia_clustering = FALSE, cluster_resolutions = seq(0.2, 1, by = 0.2)) {
 
   row_ha <- ComplexHeatmap::rowAnnotation(term = rev(heatmap_features$term))
 
-  cc_groupby <- c("G2M.Score", "S.Score", "scna", "clusters")
+  cc_groupby <- c("G2M.Score", "S.Score", "clone", "clusters")
   cc_groupby <- cc_groupby[sapply(cc_groupby, function(col) {
     vals <- seu@meta.data[[col]]
     is.null(vals) || length(unique(vals[!is.na(vals)])) > 1L
@@ -816,7 +826,7 @@ run_hypoxia_clustering = FALSE, cluster_resolutions = seq(0.2, 1, by = 0.2)) {
     seu_complex_heatmap(seu,
       features = heatmap_features$Gene.Name,
       group.by = cc_groupby,
-      col_arrangement = c("clusters", "scna"),
+      col_arrangement = c("clusters", "clone"),
       cluster_rows = FALSE,
       column_split = sort(seu@meta.data$clusters),
       row_split = rev(heatmap_features$Cluster),
@@ -833,7 +843,7 @@ run_hypoxia_clustering = FALSE, cluster_resolutions = seq(0.2, 1, by = 0.2)) {
     # dplyr::rename({{group.by}} := cluster) %>%
     identity()
 
-  cc_data <- FetchData(seu, c("clusters", "G2M.Score", "S.Score", "Phase", "scna"))
+  cc_data <- FetchData(seu, c("clusters", "G2M.Score", "S.Score", "Phase", "clone"))
 
   centroid_data <-
     cc_data %>%
@@ -858,7 +868,7 @@ run_hypoxia_clustering = FALSE, cluster_resolutions = seq(0.2, 1, by = 0.2)) {
 
   facet_cell_cycle_plot <-
     cc_data %>%
-    ggplot(aes(x = `S.Score`, y = `G2M.Score`, group = .data[["clusters"]], color = .data[["scna"]])) +
+    ggplot(aes(x = `S.Score`, y = `G2M.Score`, group = .data[["clusters"]], color = .data[["clone"]])) +
     geom_point(size = 0.1) +
     geom_point(data = centroid_data, aes(x = mean_x, y = mean_y, fill = .data[["clusters"]]), size = 6, alpha = 0.7, shape = 23, colour = "black") +
     facet_wrap(~ .data[["clusters"]], ncol = 2) +
@@ -883,12 +893,12 @@ run_hypoxia_clustering = FALSE, cluster_resolutions = seq(0.2, 1, by = 0.2)) {
 
   appender <- function(string) str_wrap(string, width = 40)
 
-  labels <- data.frame(scna = unique(seu$scna), label = str_replace(unique(seu$scna), "^$", "diploid"))
+  labels <- data.frame(clone = unique(seu$clone), label = as.character(unique(seu$clone)))
 
   clone_distribution_plot <-
-    plot_distribution_of_clones_across_clusters(seu, tumor_id, var_x = "scna", var_y = "clusters")
+    plot_distribution_of_clones_across_clusters(seu, tumor_id, var_x = "clone", var_y = "clusters")
 
-  umap_plots <- DimPlot(seu, group.by = c("scna", "clusters"), combine = FALSE) %>%
+  umap_plots <- DimPlot(seu, group.by = c("clone", "clusters"), combine = FALSE) %>%
     # map(~(.x + theme(legend.position = "bottom"))) %>%
     wrap_plots(ncol = 1)
 
