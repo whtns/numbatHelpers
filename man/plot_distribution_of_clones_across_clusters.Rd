@@ -12,7 +12,8 @@ plot_distribution_of_clones_across_clusters(
   plot_type = c("both", "clone", "cluster"),
   avg_line = NULL,
   signif = FALSE,
-  integrated = FALSE
+  integrated = FALSE,
+  reverse_fill = FALSE
 )
 }
 \description{
