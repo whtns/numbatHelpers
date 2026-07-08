@@ -1,13 +1,18 @@
 #' plot distribution of clones across clusters
 #' @export
-plot_distribution_of_clones_across_clusters <- function(seu, seu_name, var_x = "scna", var_y = "SCT_snn_res.0.6", plot_type = c("both", "clone", "cluster"), avg_line = NULL, signif = FALSE, integrated = FALSE) {
+plot_distribution_of_clones_across_clusters <- function(seu, seu_name, var_x = "scna", var_y = "SCT_snn_res.0.6", plot_type = c("both", "clone", "cluster"), avg_line = NULL, signif = FALSE, integrated = FALSE, reverse_fill = FALSE) {
   plot_type <- match.arg(plot_type)
+
+  # reverse_fill flips the stacking direction of the position="fill" bars so the
+  # fill levels read in ascending order (e.g. clones 1,2,3 left-to-right after
+  # coord_flip). Default FALSE preserves the original order for existing callers.
+  fill_pos <- ggplot2::position_fill(reverse = reverse_fill)
 
   seu_meta <- seu@meta.data
   summarized_clones <- dplyr::mutate(dplyr::select(seu_meta, .data[[var_x]], .data[[var_y]]), scna = "all")
   cluster_plot <- ggplot(seu_meta) +
-    geom_bar(position = "fill", aes(x = .data[[var_x]], fill = .data[[var_y]])) +
-    geom_bar(data = summarized_clones, position = "fill", aes(x = .data[[var_x]], fill = .data[[var_y]])) +
+    geom_bar(position = fill_pos, aes(x = .data[[var_x]], fill = .data[[var_y]])) +
+    geom_bar(data = summarized_clones, position = fill_pos, aes(x = .data[[var_x]], fill = .data[[var_y]])) +
     scale_x_discrete(labels = function(x) str_wrap(x, width = 20), limits = rev) +
     coord_flip()
 
@@ -52,14 +57,14 @@ plot_distribution_of_clones_across_clusters <- function(seu, seu_name, var_x = "
       dplyr::mutate(clusters = factor(clusters, levels = c("all", cluster_levels)))
 
     clone_plot <- ggplot(clone_input) +
-      geom_bar(position = "fill", aes(x = .data[[var_y]], fill = .data[[var_x]])) +
+      geom_bar(position = fill_pos, aes(x = .data[[var_y]], fill = .data[[var_x]])) +
       scale_x_discrete(limits = rev) +
       coord_flip() +
       theme_minimal()
   } else {
     clone_plot <- ggplot(seu_meta) +
-      geom_bar(position = "fill", aes(x = .data[[var_y]], fill = .data[[var_x]])) +
-      geom_bar(data = summarized_clusters, position = "fill", aes(x = .data[[var_y]], fill = .data[[var_x]])) +
+      geom_bar(position = fill_pos, aes(x = .data[[var_y]], fill = .data[[var_x]])) +
+      geom_bar(data = summarized_clusters, position = fill_pos, aes(x = .data[[var_y]], fill = .data[[var_x]])) +
       scale_x_discrete(limits = rev) +
       coord_flip() +
       theme_minimal()

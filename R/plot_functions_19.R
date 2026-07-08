@@ -896,14 +896,14 @@ run_hypoxia_clustering = FALSE, cluster_resolutions = seq(0.2, 1, by = 0.2)) {
   labels <- data.frame(clone = unique(seu$clone), label = as.character(unique(seu$clone)))
 
   clone_distribution_plot <-
-    plot_distribution_of_clones_across_clusters(seu, tumor_id, var_x = "clone", var_y = "clusters")
+    plot_distribution_of_clones_across_clusters(seu, tumor_id, var_x = "clone", var_y = "clusters", reverse_fill = TRUE)
 
   umap_plots <- DimPlot(seu, group.by = c("clone", "clusters"), combine = FALSE) %>%
     # map(~(.x + theme(legend.position = "bottom"))) %>%
     wrap_plots(ncol = 1)
 
   clone_tree_plot <- if (!is.null(nb_path)) {
-    plot_clone_tree(seu, tumor_id, nb_path, clone_simplifications, sample_id = sample_id, legend = FALSE, horizontal = TRUE)
+    plot_clone_tree(seu, tumor_id, nb_path, clone_simplifications, sample_id = sample_id, legend = FALSE, horizontal = FALSE)
   } else {
     NULL
   }
