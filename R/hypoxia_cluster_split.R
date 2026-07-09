@@ -6,14 +6,24 @@
 # hypoxia_score is a high-side statistical outlier among that resolution's
 # per-cluster means. Hits are unioned across resolutions.
 #
-# This scheme deliberately does NOT depend on hypoxia marker-gene presence:
-# a cluster is "high" only if its mean hypoxia_score is a high-side outlier by a
-# robust-z rule, median(means) + 3*MAD. (Robust z is used instead of a Tukey
-# fence because, when 2+ of a sample's few clusters are hypoxic, those clusters
-# inflate Q3 and the fence rises above them; median/MAD track the bulk.) The
-# marker-overlap columns (n_hyp_markers, matched_genes) and the top-5 marker
-# genes per cluster are still reported in the per-sample log for interpretation,
-# but they do not drive the split.
+# The core rule flags a cluster "high" when its mean hypoxia_score is a
+# high-side outlier by a robust-z rule, median(means) + 3*MAD. (Robust z is used
+# instead of a Tukey fence because, when 2+ of a sample's few clusters are
+# hypoxic, those clusters inflate Q3 and the fence rises above them; median/MAD
+# track the bulk.) The score outlier is then gated by two filters (both on by
+# default in split_hypoxia_by_clusters):
+#   1. Marker gate (min_hyp_markers = 2): the cluster must carry >= 2 hypoxia
+#      markers in its top-N. Drops pure cell-cycle-phase clusters (histone/PLK2
+#      S-phase, CENPF/MKI67 G2M) whose hypoxia_score is inflated by the
+#      snoRNA-host genes in the marker set but carry no real hypoxia markers.
+#   2. Direct phase gate (max_dom_frac = 0.70): the cluster must be phase-MIXED
+#      (dominant cell-cycle-phase fraction < 0.70). This catches what the marker
+#      gate cannot — clusters that DO carry hypoxia markers (snoRNA-host
+#      ride-along) yet are still single-phase, so filtering them would delete a
+#      fine-grained phase state. Phase is scored once via
+#      annotate_cell_cycle_without_1q(). See doc/hypoxia_split_outlier_rule.md
+#      and the offline diagnostic src/eval_hypoxia_cluster_phase.R.
+# Set min_hyp_markers = 0, max_dom_frac = NULL for the original score-only rule.
 # See doc/hypoxia_split_outlier_rule.md for the rule and alternatives.
 
 # snoRNA-host genes (the ZFAS1/GAS5 family that drives these clusters) plus
@@ -47,25 +57,40 @@
 #' @param top_markers_n Number of top markers per cluster reported in the
 #'   `top_markers` column (default 5).
 #' @param mad_k Robust-z multiplier for the outlier threshold (default 3).
+#' @param min_hyp_markers Minimum number of hypoxia marker genes a cluster must
+#'   carry in its top-`top_n` markers to be flagged, in addition to being a
+#'   score outlier (default 0 = score-only, marker-independent). Set > 0 to
+#'   suppress pure cell-cycle-phase clusters that score high on the
+#'   snoRNA-host-gene-laden hypoxia module without genuine hypoxia markers.
+#' @param max_dom_frac Direct phase-purity gate. When non-NULL and the object
+#'   carries a `Phase` metadata column, a cluster is flagged only if it is
+#'   phase-MIXED — i.e. its dominant cell-cycle-phase fraction is `< max_dom_frac`
+#'   (default `NULL` = no phase gate). Set e.g. 0.70 so phase-restricted clusters
+#'   (a single dominant G1/S/G2M phase) are NOT swept into the high-hypoxia
+#'   subset even when they carry hypoxia markers (the snoRNA-host ride-along).
+#'   Clusters with no usable Phase info (`dom_frac` NA) are treated permissively
+#'   (the gate does not block them; the marker gate still governs).
 #' @param return_detail If `TRUE`, return the full per-cluster decision table
 #'   (one row per cluster) instead of just the flagged cluster ids.
 #' @return By default a character vector of outlier cluster ids (possibly
 #'   empty). With `return_detail = TRUE`, a data.frame with columns `cluster`,
 #'   `n_cells`, `top_markers`, `n_hyp_markers`, `matched_genes`, `mean_score`,
-#'   `outlier_fence`, `is_outlier`, `flagged`. Never errors — returns an empty
-#'   result of the requested shape on failure.
+#'   `dom_frac`, `outlier_fence`, `is_outlier`, `phase_mixed`, `flagged`. Never
+#'   errors — returns an empty result of the requested shape on failure.
 #' @export
 identify_hypoxia_clusters <- function(seu, grp,
                                       hypoxia_genes = .hypoxia_marker_set,
                                       top_n = 20, top_markers_n = 5,
-                                      mad_k = 3,
+                                      mad_k = 3, min_hyp_markers = 0,
+                                      max_dom_frac = NULL,
                                       return_detail = FALSE) {
   empty <- if (return_detail) {
     data.frame(cluster = character(0), n_cells = integer(0),
                top_markers = character(0), n_hyp_markers = integer(0),
                matched_genes = character(0), mean_score = numeric(0),
+               dom_frac = numeric(0),
                outlier_fence = numeric(0), is_outlier = logical(0),
-               flagged = logical(0),
+               phase_mixed = logical(0), flagged = logical(0),
                stringsAsFactors = FALSE)
   } else character(0)
 
@@ -105,6 +130,19 @@ identify_hypoxia_clusters <- function(seu, grp,
       cl_mean <- stats::setNames(rep(NA_real_, length(clusters)), clusters)
     }
 
+    # per-cluster dominant cell-cycle-phase fraction (for the direct phase gate).
+    # NA when no Phase column or no non-NA phase calls in the cluster.
+    if ("Phase" %in% colnames(seu@meta.data)) {
+      phv      <- as.character(seu@meta.data[["Phase"]])
+      dom_frac <- vapply(clusters, function(cl) {
+        ph <- phv[grpv == cl]; ph <- ph[!is.na(ph)]
+        if (length(ph) == 0) return(NA_real_)
+        max(table(ph)) / length(ph)
+      }, numeric(1))
+    } else {
+      dom_frac <- stats::setNames(rep(NA_real_, length(clusters)), clusters)
+    }
+
     detail <- data.frame(
       cluster       = clusters,
       n_cells       = cl_n,
@@ -112,6 +150,7 @@ identify_hypoxia_clusters <- function(seu, grp,
       n_hyp_markers = unname(n_hyp[clusters]),
       matched_genes = unname(matched[clusters]),
       mean_score    = unname(as.numeric(cl_mean[clusters])),
+      dom_frac      = unname(as.numeric(dom_frac[clusters])),
       stringsAsFactors = FALSE)
 
     # Robust-z (median + mad_k * MAD) over the per-cluster means: flag high-side
@@ -124,7 +163,27 @@ identify_hypoxia_clusters <- function(seu, grp,
     detail$outlier_fence <- fence
     detail$is_outlier    <- !is.na(detail$mean_score) & is.finite(fence) &
                             md > 0 & detail$mean_score > fence
-    detail$flagged       <- detail$is_outlier
+    # Optional marker gate: with min_hyp_markers > 0 a cluster must ALSO carry at
+    # least that many hypoxia marker genes in its top-N to be flagged. This
+    # suppresses pure cell-cycle-phase clusters (e.g. histone/PLK2 S-phase or
+    # CENPF/MKI67 G2M) whose mean hypoxia_score is inflated by the snoRNA-host
+    # genes in the marker set but that are not genuinely hypoxic. Default 0
+    # preserves the score-only rule (used by the phase-evaluation diagnostic).
+    #
+    # Direct phase gate (max_dom_frac): the marker gate cannot catch clusters
+    # that carry hypoxia markers yet are still single-phase (the snoRNA-host
+    # ride-along in proliferating cells). When max_dom_frac is set, a cluster is
+    # flagged only if it is phase-MIXED (dominant-phase fraction < max_dom_frac).
+    # Clusters with no usable Phase info (dom_frac NA) are treated permissively
+    # so the gate never blocks on absent phase annotation.
+    detail$phase_mixed <- if (is.null(max_dom_frac)) {
+      rep(TRUE, nrow(detail))
+    } else {
+      is.na(detail$dom_frac) | detail$dom_frac < max_dom_frac
+    }
+    detail$flagged       <- detail$is_outlier &
+                            detail$n_hyp_markers >= min_hyp_markers &
+                            detail$phase_mixed
 
     if (return_detail) detail else as.character(detail$cluster[detail$flagged])
   }, error = function(e) {
@@ -185,10 +244,15 @@ identify_hypoxia_clusters <- function(seu, grp,
 #' @param hypoxia_seu_path Path to a `*_seu_hypoxia.rds` (has `hypoxia_score`,
 #'   a `pca` reduction, and ideally a `umap`).
 #' @param resolutions Louvain resolutions to cluster at (hits unioned across
-#'   them).
+#'   them; default `c(0.2, 0.6, 1.0)`).
 #' @param n_iter Number of peeling rounds (default 1 — single round).
-#' @param hypoxia_genes,top_n,top_markers_n,mad_k Passed to
-#'   [identify_hypoxia_clusters()].
+#' @param hypoxia_genes,top_n,top_markers_n,mad_k,min_hyp_markers,max_dom_frac
+#'   Passed to [identify_hypoxia_clusters()]. `min_hyp_markers` defaults to 2
+#'   here (marker gate on) and `max_dom_frac` to 0.70 (direct phase gate on),
+#'   unlike the diagnostic defaults of 0 / NULL. Together they flag a cluster
+#'   only when it is a score outlier, carries >= 2 hypoxia markers, AND is
+#'   phase-mixed (dominant-phase fraction < 0.70). Phase is computed once up
+#'   front via [annotate_cell_cycle_without_1q()] if not already present.
 #' @param split_assay Assay used for the partition clustering (default "gene").
 #' @param low_assay,high_assay Assays passed to [subset_seu_by_expression()]
 #'   for the low/high subset re-clustering (defaults match the prior pipeline:
@@ -198,10 +262,12 @@ identify_hypoxia_clusters <- function(seu, grp,
 #'   paths, or `NA_character_` for a missing input.
 #' @export
 split_hypoxia_by_clusters <- function(hypoxia_seu_path,
-                                      resolutions = c(0.2, 0.4, 0.6),
+                                      resolutions = c(0.2, 0.6, 1.0),
                                       n_iter = 1,
                                       hypoxia_genes = .hypoxia_marker_set,
                                       top_n = 20, top_markers_n = 5, mad_k = 3,
+                                      min_hyp_markers = 2,
+                                      max_dom_frac = 0.70,
                                       split_assay = "gene",
                                       low_assay = "gene", high_assay = "SCT",
                                       write_qc = TRUE) {
@@ -217,6 +283,21 @@ split_hypoxia_by_clusters <- function(hypoxia_seu_path,
   Seurat::DefaultAssay(seu) <- da
   if (!"data" %in% SeuratObject::Layers(seu[[da]])) {
     seu <- Seurat::NormalizeData(seu, assay = da, verbose = FALSE)
+  }
+
+  # Cell-cycle Phase for the direct phase-purity gate. Compute once up front
+  # (Phase is a per-cell property, invariant to clustering resolution). The
+  # hypoxia_seu inputs do not reliably carry Phase, so annotate here when the
+  # gate is on. Best-effort: if scoring fails the gate degrades to permissive
+  # (identify_hypoxia_clusters treats NA dom_frac as not-blocking).
+  if (!is.null(max_dom_frac) && !"Phase" %in% colnames(seu@meta.data)) {
+    seu <- tryCatch(
+      annotate_cell_cycle_without_1q(seu),
+      error = function(e) {
+        warning(sample_id, " cell-cycle scoring failed (phase gate off): ",
+                conditionMessage(e))
+        seu
+      })
   }
 
   seu$hypoxia_round <- NA_integer_
@@ -249,7 +330,9 @@ split_hypoxia_by_clusters <- function(hypoxia_seu_path,
         sub@meta.data[[grp]] <- sub$seurat_clusters
         det <- identify_hypoxia_clusters(
           sub, grp, hypoxia_genes = hypoxia_genes, top_n = top_n,
-          top_markers_n = top_markers_n, mad_k = mad_k, return_detail = TRUE)
+          top_markers_n = top_markers_n, mad_k = mad_k,
+          min_hyp_markers = min_hyp_markers, max_dom_frac = max_dom_frac,
+          return_detail = TRUE)
         if (is.data.frame(det) && nrow(det) > 0) {
           det <- cbind(sample_id = sample_id, round = round, resolution = res,
                        pool_n = n_cells, det, stringsAsFactors = FALSE)
