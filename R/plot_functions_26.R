@@ -18,9 +18,13 @@ window <- function(x, size) {
 #' @param cluster_dictionary Cluster information
 #' @param location Character string (default: "cis")
 #' @param scna_of_interest Parameter for scna of interest
-#' @return Differential expression results
+#' @param group.by Cluster column used to build `clusters` when the object does
+#'   not already carry it (default "SCT_snn_res.0.6", the resolution the rest of
+#'   the figure pipeline keys on).
+#' @return Path to the diffex CSV, or `NA_character_` when the sample has nothing
+#'   to compare (no numbat run, no clone comparisons, or no usable clusters).
 #' @export
-find_diffex_bw_clones_for_each_cluster <- function(seu_path, numbat_rds_files, large_clone_comparisons, cluster_dictionary, location = "cis", scna_of_interest = NULL) {
+find_diffex_bw_clones_for_each_cluster <- function(seu_path, numbat_rds_files, large_clone_comparisons, cluster_dictionary, location = "cis", scna_of_interest = NULL, group.by = "SCT_snn_res.0.6") {
   #
   tumor_id <- str_extract(seu_path, "SR[RX][0-9]+")
 
@@ -29,14 +33,41 @@ find_diffex_bw_clones_for_each_cluster <- function(seu_path, numbat_rds_files, l
   numbat_rds_files <- numbat_rds_files %>%
     set_names(str_extract(., "SR[RX][0-9]+"))
 
+  # A sample with no numbat run has no clones to compare. `[[` on an absent name
+  # errors, so check first and skip cleanly instead.
+  if (!tumor_id %in% names(numbat_rds_files)) {
+    warning(sample_id, ": no numbat rds; skipping cluster/clone diffex.")
+    return(NA_character_)
+  }
   mynb <- readRDS(numbat_rds_files[[tumor_id]])
 
   seu <- readRDS(seu_path)
 
   seu <- Seurat::RenameCells(seu, new.names = str_replace(colnames(seu), "\\.", "-"))
 
-  myclusters <- sort(unique(seu@meta.data[["clusters"]])) %>%
-    set_names(.)
+  # `clusters` is the phase-prefixed factor built by assign_auto_phase_clusters()
+  # (e.g. g1_0, s_star_13). The *_filtered_seu.rds inputs carry it because the
+  # collage path builds it, but a freshly subset *_hypoxia_low_seu.rds does NOT --
+  # subset_seu_by_expression() only writes <assay>_snn_res.* columns. Without it,
+  # seu@meta.data[["clusters"]] is NULL, sort(unique(NULL)) is NULL, and
+  # set_names(NULL) throws "`x` must be a vector" -- which is what killed every
+  # fig_1q/fig_16q per-cluster diffex branch (and, via error = "stop", entire
+  # pipeline runs) rather than any actual degeneracy in the data.
+  if (!"clusters" %in% colnames(seu@meta.data)) {
+    if (!group.by %in% colnames(seu@meta.data)) {
+      warning(sample_id, ": no `clusters` column and no `", group.by,
+              "` to derive one from; skipping cluster/clone diffex.")
+      return(NA_character_)
+    }
+    seu <- assign_auto_phase_clusters(seu, group.by)
+  }
+
+  myclusters <- sort(unique(seu@meta.data[["clusters"]]))
+  if (length(myclusters) == 0) {
+    warning(sample_id, ": no usable clusters; skipping cluster/clone diffex.")
+    return(NA_character_)
+  }
+  myclusters <- set_names(as.character(myclusters))
 
   clone_diff_per_cluster <- function(cluster_for_diffex, seu, clone_comparisons, location, mynb) {
     seu0 <- seu[, seu[["clusters"]] == cluster_for_diffex]
@@ -49,24 +80,42 @@ find_diffex_bw_clones_for_each_cluster <- function(seu_path, numbat_rds_files, l
 
 
   clone_comparisons <- large_clone_comparisons[[tumor_id]]
-  
+
   if(!is.null(scna_of_interest)){
   	clone_comparisons <-
-  		clone_comparisons[str_detect(names(clone_comparisons), scna_of_interest)]	
-  	
-  	# log cell number per clone per cluster 
+  		clone_comparisons[str_detect(names(clone_comparisons), scna_of_interest)]
+
+  	# log cell number per clone per cluster
   	idents <-
   		names(clone_comparisons) %>%
   		str_extract("[0-9]_v_[0-9]") %>%
   		str_split(pattern = "_v_") %>%
   		unlist()
-  	
+
   	log_path <- glue("results/{path_ext_remove(path_file(seu_path))}_log.csv")
-  	
-  	clone_per_cluster <- seu@meta.data |> 
-  		dplyr::filter(clone_opt %in% idents) |> 
-  		janitor::tabyl(scna, clusters) |> 
-  		write_csv(log_path)
+
+  	# Diagnostic CSV only — it must never take the target down. tabyl() needs both
+  	# `scna` and `clusters`, and `scna` is absent from freshly subset low-hypoxia
+  	# objects.
+  	tryCatch({
+  		seu@meta.data |>
+  			dplyr::filter(clone_opt %in% idents) |>
+  			janitor::tabyl(scna, clusters) |>
+  			write_csv(log_path)
+  	}, error = function(e) {
+  		warning(sample_id, ": clone-per-cluster log skipped: ", conditionMessage(e))
+  	})
+  }
+
+  # No clones to compare for this sample/SCNA (e.g. a near-diploid tumour, or an
+  # scna_of_interest that this sample simply does not carry). Downstream
+  # plot_fig_07_08() cannot use an empty diffex, so skip rather than write an empty
+  # CSV that looks like a real result.
+  if (length(clone_comparisons) == 0) {
+    warning(sample_id, ": no clone comparisons",
+            if (!is.null(scna_of_interest)) paste0(" for ", scna_of_interest) else "",
+            "; skipping cluster/clone diffex.")
+    return(NA_character_)
   }
   # 
   message(sample_id)
