@@ -6,12 +6,21 @@
 \usage{
 split_hypoxia_by_clusters(
   hypoxia_seu_path,
-  resolutions = c(0.2, 0.4, 0.6),
+  resolutions = seq(0.2, 1.2, by = 0.2),
+  stability_tol = 0.05,
+  stability_window = 2,
+  recluster_step = 0.4,
+  confirmatory_drop = TRUE,
+  max_confirmatory_rounds = 5,
+  max_recluster_res = NULL,
+  write_diagnostics = TRUE,
   n_iter = 1,
   hypoxia_genes = .hypoxia_marker_set,
   top_n = 20,
   top_markers_n = 5,
   mad_k = 3,
+  min_hyp_markers = 2,
+  max_dom_frac = 0.7,
   split_assay = "gene",
   low_assay = "gene",
   high_assay = "SCT",
@@ -22,13 +31,57 @@ split_hypoxia_by_clusters(
 \item{hypoxia_seu_path}{Path to a \verb{*_seu_hypoxia.rds} (has \code{hypoxia_score},
 a \code{pca} reduction, and ideally a \code{umap}).}
 
-\item{resolutions}{Louvain resolutions to cluster at (hits unioned across
-them).}
+\item{resolutions}{Louvain resolutions to sweep, coarse to fine (default
+\code{seq(0.2, 1.2, by = 0.2)}). All are logged; the drop happens at the lowest
+\emph{stable} one (\code{r_flag}, see \code{stability_tol}).}
 
-\item{n_iter}{Number of peeling rounds (default 1 — single round).}
+\item{stability_tol}{Relative tolerance (default 0.05) used to pick \code{r_flag}:
+the anchor is the lowest resolution whose flagged-cell count is within this
+fraction of the next \code{stability_window} flagging resolutions'. This rejects a
+too-coarse resolution that \emph{detects} the hypoxic population but under-resolves
+it — capturing only part of it and merging the rest into neighbouring clusters
+(SRX10264518: 507 cells at res 0.2 vs a stable ~660 from 0.4 up). If no
+resolution stabilises, falls back to the one flagging the most cells so the
+split never knowingly under-drops.}
 
-\item{hypoxia_genes, top_n, top_markers_n, mad_k}{Passed to
-\code{\link[=identify_hypoxia_clusters]{identify_hypoxia_clusters()}}.}
+\item{stability_window}{How many successive resolutions the anchor's count must
+agree with (default 2). One is not enough: a monotonically rising count can
+contain a spurious one-step flat spot (SRX22868102 goes 385, 480, 437, 434,
+538, 566 — 0.6 and 0.8 agree to 0.7\% but the population is still growing), and
+anchoring there under-drops by ~20\%. Requiring two successive agreements
+rejects that flat spot and advances to the real plateau.}
+
+\item{recluster_step}{Resolution increment per confirmatory pass; pass \code{k}
+re-clusters the survivors at \code{r_flag + k * recluster_step} (default 0.4).}
+
+\item{confirmatory_drop}{Whether clusters still flagging in a confirmatory pass
+are also assigned to the high subset (default \code{TRUE}, and the passes then
+iterate to convergence). Set \code{FALSE} to run a single pass that records the
+residual in the log without dropping it.}
+
+\item{max_confirmatory_rounds}{Safety cap on the number of confirmatory drop
+passes (default 5). Hitting it warns — the low subset may still hold hypoxia.}
+
+\item{max_recluster_res}{Ceiling for the confirmatory ladder: stop once
+\code{r_flag + k * recluster_step} would exceed it. Defaults to \code{max(resolutions)}
+so the confirmatory passes never explore beyond the swept range — above it,
+clusters fragment and the MAD fence gets easier to clear, so an unbounded
+ladder manufactures drops. Note this means a sample whose \code{r_flag} is already
+the top resolution gets the primary drop only.}
+
+\item{write_diagnostics}{Whether to emit the three per-sample stage heatmap
+PDFs (at \code{r_flag} before the drop, at \code{r_flag} after it, and at
+\code{r_flag + recluster_step}).}
+
+\item{n_iter}{Deprecated, retained for call-site back-compatibility; the split
+is now always a single pass plus the confirmatory clean-up.}
+
+\item{hypoxia_genes, top_n, top_markers_n, mad_k, min_hyp_markers, max_dom_frac}{Passed to \code{\link[=identify_hypoxia_clusters]{identify_hypoxia_clusters()}}. \code{min_hyp_markers} defaults to 2
+here (marker gate on) and \code{max_dom_frac} to 0.70 (direct phase gate on),
+unlike the diagnostic defaults of 0 / NULL. Together they flag a cluster
+only when it is a score outlier, carries >= 2 hypoxia markers, AND is
+phase-mixed (dominant-phase fraction < 0.70). Phase is computed once up
+front via \code{\link[=annotate_cell_cycle_without_1q]{annotate_cell_cycle_without_1q()}} if not already present.}
 
 \item{split_assay}{Assay used for the partition clustering (default "gene").}
 
@@ -43,12 +96,23 @@ Named character vector \code{c(low = ..., high = ...)} of output RDS
 paths, or \code{NA_character_} for a missing input.
 }
 \description{
-Clusters cells at several resolutions in a single round, flags clusters whose
-mean \code{hypoxia_score} is a high-side outlier (see \code{\link[=identify_hypoxia_clusters]{identify_hypoxia_clusters()}}),
-and assigns their cells to the high subset. A cell is high if it lands in a
-flagged cluster at ANY resolution in \code{resolutions} (hits unioned across
-resolutions). After labelling, the established \code{\link[=subset_seu_by_expression]{subset_seu_by_expression()}}
-path produces the \verb{*_hypoxia_low_seu.rds} / \verb{*_hypoxia_high_seu.rds} outputs
-(re-clustering, markers, UMAP, hash metadata, barcode DB) so every
-downstream target is unchanged.
+Sweeps \code{resolutions} coarse-to-fine, flagging clusters whose mean
+\code{hypoxia_score} is a high-side outlier (see \code{\link[=identify_hypoxia_clusters]{identify_hypoxia_clusters()}}).
+Every resolution is logged, but the drop is anchored at \code{r_flag} — the LOWEST
+resolution at which anything flags. All cells of every cluster flagged at
+\code{r_flag} go high. The survivors are then re-clustered at
+\code{r_flag + recluster_step} and any cluster still flagging there is dropped too;
+this confirmatory clean-up \strong{iterates} at \code{r_flag + k * recluster_step},
+k = 1, 2, …, until a pass flags nothing, so residual hypoxia that only becomes
+separable at a much finer scale is still caught. \code{hypoxia_round} records which
+pass took a cell (1 = primary drop at \code{r_flag}; 2, 3, … = the confirmatory
+passes, so the log shows which resolution finally separated each pocket).
+}
+\details{
+After labelling, the established \code{\link[=subset_seu_by_expression]{subset_seu_by_expression()}} path produces
+the \verb{*_hypoxia_low_seu.rds} / \verb{*_hypoxia_high_seu.rds} outputs (re-clustering
+over its own full resolution grid, markers, UMAP, hash metadata, barcode DB)
+so every downstream target is unchanged. The \code{r_flag + recluster_step}
+clustering is diagnostic only and is not what the persisted low object
+carries.
 }

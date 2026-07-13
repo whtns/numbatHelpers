@@ -1,10 +1,24 @@
-# Cluster-based hypoxia split (single round, outlier mean-score rule).
+# Cluster-based hypoxia split (lowest-resolution-first drop + confirmatory
+# clean-up).
 #
 # Alternative to the per-cell hypoxia_score threshold used by
-# subset_seu_by_expression(): cluster the cells (at several resolutions in ONE
-# round) and assign WHOLE clusters to the high-hypoxia subset when their mean
-# hypoxia_score is a high-side statistical outlier among that resolution's
-# per-cluster means. Hits are unioned across resolutions.
+# subset_seu_by_expression(): cluster the cells and assign WHOLE clusters to the
+# high-hypoxia subset when their mean hypoxia_score is a high-side statistical
+# outlier among that resolution's per-cluster means.
+#
+# The sweep runs over `resolutions` from coarse to fine, logging every
+# resolution, but the DROP is anchored at r_flag — the LOWEST resolution at which
+# any cluster flags, i.e. the coarsest scale at which the hypoxic population
+# first becomes separable. All cells of every cluster flagged at r_flag go high.
+# The survivors are then re-clustered at r_flag + recluster_step (default +0.4)
+# and any cluster still flagging there is dropped too — and this confirmatory
+# clean-up ITERATES (r_flag + k*recluster_step, k = 1, 2, ...) until a pass flags
+# nothing. One pass is not sufficient: residual hypoxia can stay merged until well
+# above r_flag + recluster_step, so the loop runs to quiescence to keep the low
+# subset (the SCNA/clone input) clean.
+#
+# This replaces the earlier rule, which unioned hits across a fixed resolution
+# grid and was hard to reason about and prone to over-dropping.
 #
 # The core rule flags a cluster "high" when its mean hypoxia_score is a
 # high-side outlier by a robust-z rule, median(means) + 3*MAD. (Robust z is used
@@ -33,6 +47,50 @@
   "VEGFA", "NDRG1", "BNIP3", "BNIP3L", "SLC2A1", "CA9", "PGK1", "LDHA",
   "ENO1", "ANKRD37", "ADM", "P4HA1", "PLOD2"
 )
+
+#' Pick the anchor (lowest stable) resolution from a sweep's flagged-cell counts
+#'
+#' Shared by [split_hypoxia_by_clusters()] (which records the choice in the split
+#' log) and by readers of that log, so the rule lives in exactly one place and
+#' cannot drift between producer and consumer.
+#'
+#' Returns the index of the lowest resolution whose flagged-cell count agrees,
+#' within `stability_tol`, with the next `stability_window` flagging resolutions.
+#' A single successor is not enough: a monotonically rising count can contain a
+#' spurious one-step flat spot (SRX22868102 goes 385, 480, 437, 434, 538, 566 —
+#' 0.6/0.8 agree to 0.7% while the population is still growing), and anchoring
+#' there under-drops by ~20%. If nothing stabilises, falls back to the
+#' most-cells index (with attribute `fallback = TRUE`) so the split never
+#' knowingly under-drops.
+#'
+#' @param counts Integer vector of flagged-cell counts, one per resolution,
+#'   ordered coarse -> fine. Zeros mean that resolution flagged nothing.
+#' @param stability_tol Relative tolerance (default 0.05).
+#' @param stability_window Number of successive resolutions the anchor must agree
+#'   with (default 2).
+#' @return Integer index into `counts`, or `NA_integer_` if nothing flagged.
+#'   Carries attribute `fallback = TRUE` when no resolution stabilised.
+#' @export
+pick_hypoxia_anchor <- function(counts, stability_tol = 0.05,
+                                stability_window = 2) {
+  counts   <- as.integer(counts)
+  idx_flag <- which(counts > 0)
+  if (length(idx_flag) == 0) return(NA_integer_)
+
+  for (i in idx_flag) {
+    js <- (i + 1L):(i + stability_window)
+    js <- js[js <= length(counts)]
+    if (length(js) == 0 || any(counts[js] == 0)) next
+    ok <- vapply(js, function(j) {
+      abs(counts[j] - counts[i]) / max(counts[i], counts[j]) <= stability_tol
+    }, logical(1))
+    if (all(ok)) return(as.integer(i))
+  }
+
+  pick <- as.integer(idx_flag[which.max(counts[idx_flag])])
+  attr(pick, "fallback") <- TRUE
+  pick
+}
 
 #' Identify outlier-hypoxia clusters at one grouping
 #'
@@ -230,22 +288,109 @@ identify_hypoxia_clusters <- function(seu, grp,
   })
 }
 
+# One marker-heatmap/phase-scatter collage for an intermediate state of the split
+# (a clustering that only exists inside split_hypoxia_by_clusters). Best-effort —
+# never aborts the split.
+#
+# plot_seu_marker_heatmap() takes a path, and both it and dummy_cluster_order()
+# key on the "SCT_snn_res.0.6" column, so the split clustering is copied into
+# that column and the object is written to a temp RDS named `slug`. Because
+# `slug` does not contain "_filtered_seu", the plotter keeps the whole name and
+# emits results/{slug}__filtered_heatmap_phase_scatter_patchwork.pdf.
+.write_hypoxia_stage_heatmap <- function(seu, group_col, slug) {
+  out <- tryCatch({
+    seu@meta.data[["SCT_snn_res.0.6"]] <- factor(
+      as.character(seu@meta.data[[group_col]]))
+    # plot_seu_marker_heatmap() computes markers on SCT but filters them by
+    # VariableFeatures(seu), which reads the DEFAULT assay. The split object's
+    # default is "gene", so the two disagree and the marker set can come out empty
+    # ("No marker heatmap features" -> collage silently skipped, as on
+    # SRX22868102). Point the default assay at SCT so they match.
+    if ("SCT" %in% names(seu@assays)) {
+      Seurat::DefaultAssay(seu) <- "SCT"
+      if (length(Seurat::VariableFeatures(seu)) == 0) {
+        seu <- Seurat::FindVariableFeatures(seu, assay = "SCT", verbose = FALSE)
+      }
+    }
+    tmp_path <- file.path(tempdir(), slug)
+    saveRDS(seu, tmp_path)
+    plot_seu_marker_heatmap(tmp_path, cluster_order = NULL, nb_paths = NULL,
+                            label = "_filtered_")
+  }, error = function(e) {
+    # message(), not warning(): Rscript defers warnings to the end of the script,
+    # which hides a failure here until long after (or never, if the run is killed)
+    message("!! hypoxia stage heatmap FAILED for ", slug, ": ",
+            conditionMessage(e))
+    NA_character_
+  })
+  expected <- glue::glue("results/{slug}__filtered_heatmap_phase_scatter_patchwork.pdf")
+  if (!file.exists(expected)) {
+    message("!! hypoxia stage heatmap produced NO pdf at ", expected)
+  } else {
+    message("wrote stage heatmap ", expected)
+  }
+  out
+}
+
 #' Split a hypoxia-scored Seurat object into low/high subsets by clustering
 #'
-#' Clusters cells at several resolutions in a single round, flags clusters whose
-#' mean `hypoxia_score` is a high-side outlier (see [identify_hypoxia_clusters()]),
-#' and assigns their cells to the high subset. A cell is high if it lands in a
-#' flagged cluster at ANY resolution in `resolutions` (hits unioned across
-#' resolutions). After labelling, the established [subset_seu_by_expression()]
-#' path produces the `*_hypoxia_low_seu.rds` / `*_hypoxia_high_seu.rds` outputs
-#' (re-clustering, markers, UMAP, hash metadata, barcode DB) so every
-#' downstream target is unchanged.
+#' Sweeps `resolutions` coarse-to-fine, flagging clusters whose mean
+#' `hypoxia_score` is a high-side outlier (see [identify_hypoxia_clusters()]).
+#' Every resolution is logged, but the drop is anchored at `r_flag` — the LOWEST
+#' resolution at which anything flags. All cells of every cluster flagged at
+#' `r_flag` go high. The survivors are then re-clustered at
+#' `r_flag + recluster_step` and any cluster still flagging there is dropped too;
+#' this confirmatory clean-up **iterates** at `r_flag + k * recluster_step`,
+#' k = 1, 2, …, until a pass flags nothing, so residual hypoxia that only becomes
+#' separable at a much finer scale is still caught. `hypoxia_round` records which
+#' pass took a cell (1 = primary drop at `r_flag`; 2, 3, … = the confirmatory
+#' passes, so the log shows which resolution finally separated each pocket).
+#'
+#' After labelling, the established [subset_seu_by_expression()] path produces
+#' the `*_hypoxia_low_seu.rds` / `*_hypoxia_high_seu.rds` outputs (re-clustering
+#' over its own full resolution grid, markers, UMAP, hash metadata, barcode DB)
+#' so every downstream target is unchanged. The `r_flag + recluster_step`
+#' clustering is diagnostic only and is not what the persisted low object
+#' carries.
 #'
 #' @param hypoxia_seu_path Path to a `*_seu_hypoxia.rds` (has `hypoxia_score`,
 #'   a `pca` reduction, and ideally a `umap`).
-#' @param resolutions Louvain resolutions to cluster at (hits unioned across
-#'   them; default `c(0.2, 0.6, 1.0)`).
-#' @param n_iter Number of peeling rounds (default 1 — single round).
+#' @param resolutions Louvain resolutions to sweep, coarse to fine (default
+#'   `seq(0.2, 1.2, by = 0.2)`). All are logged; the drop happens at the lowest
+#'   *stable* one (`r_flag`, see `stability_tol`).
+#' @param stability_tol Relative tolerance (default 0.05) used to pick `r_flag`:
+#'   the anchor is the lowest resolution whose flagged-cell count is within this
+#'   fraction of the next `stability_window` flagging resolutions'. This rejects a
+#'   too-coarse resolution that *detects* the hypoxic population but under-resolves
+#'   it — capturing only part of it and merging the rest into neighbouring clusters
+#'   (SRX10264518: 507 cells at res 0.2 vs a stable ~660 from 0.4 up). If no
+#'   resolution stabilises, falls back to the one flagging the most cells so the
+#'   split never knowingly under-drops.
+#' @param stability_window How many successive resolutions the anchor's count must
+#'   agree with (default 2). One is not enough: a monotonically rising count can
+#'   contain a spurious one-step flat spot (SRX22868102 goes 385, 480, 437, 434,
+#'   538, 566 — 0.6 and 0.8 agree to 0.7% but the population is still growing), and
+#'   anchoring there under-drops by ~20%. Requiring two successive agreements
+#'   rejects that flat spot and advances to the real plateau.
+#' @param recluster_step Resolution increment per confirmatory pass; pass `k`
+#'   re-clusters the survivors at `r_flag + k * recluster_step` (default 0.4).
+#' @param confirmatory_drop Whether clusters still flagging in a confirmatory pass
+#'   are also assigned to the high subset (default `TRUE`, and the passes then
+#'   iterate to convergence). Set `FALSE` to run a single pass that records the
+#'   residual in the log without dropping it.
+#' @param max_confirmatory_rounds Safety cap on the number of confirmatory drop
+#'   passes (default 5). Hitting it warns — the low subset may still hold hypoxia.
+#' @param max_recluster_res Ceiling for the confirmatory ladder: stop once
+#'   `r_flag + k * recluster_step` would exceed it. Defaults to `max(resolutions)`
+#'   so the confirmatory passes never explore beyond the swept range — above it,
+#'   clusters fragment and the MAD fence gets easier to clear, so an unbounded
+#'   ladder manufactures drops. Note this means a sample whose `r_flag` is already
+#'   the top resolution gets the primary drop only.
+#' @param write_diagnostics Whether to emit the three per-sample stage heatmap
+#'   PDFs (at `r_flag` before the drop, at `r_flag` after it, and at
+#'   `r_flag + recluster_step`).
+#' @param n_iter Deprecated, retained for call-site back-compatibility; the split
+#'   is now always a single pass plus the confirmatory clean-up.
 #' @param hypoxia_genes,top_n,top_markers_n,mad_k,min_hyp_markers,max_dom_frac
 #'   Passed to [identify_hypoxia_clusters()]. `min_hyp_markers` defaults to 2
 #'   here (marker gate on) and `max_dom_frac` to 0.70 (direct phase gate on),
@@ -262,7 +407,14 @@ identify_hypoxia_clusters <- function(seu, grp,
 #'   paths, or `NA_character_` for a missing input.
 #' @export
 split_hypoxia_by_clusters <- function(hypoxia_seu_path,
-                                      resolutions = c(0.2, 0.6, 1.0),
+                                      resolutions = seq(0.2, 1.2, by = 0.2),
+                                      stability_tol = 0.05,
+                                      stability_window = 2,
+                                      recluster_step = 0.4,
+                                      confirmatory_drop = TRUE,
+                                      max_confirmatory_rounds = 5,
+                                      max_recluster_res = NULL,
+                                      write_diagnostics = TRUE,
                                       n_iter = 1,
                                       hypoxia_genes = .hypoxia_marker_set,
                                       top_n = 20, top_markers_n = 5, mad_k = 3,
@@ -301,31 +453,47 @@ split_hypoxia_by_clusters <- function(hypoxia_seu_path,
   }
 
   seu$hypoxia_round <- NA_integer_
-  pool <- colnames(seu)  # current low pool
-  log_rows <- list()     # per round x resolution x cluster decision trace
+  log_rows <- list()      # per resolution x cluster decision trace
+  resolutions   <- sort(unique(as.numeric(resolutions)))
+  # The confirmatory ladder must not explore beyond the swept range: at high
+  # resolution clusters fragment and the MAD fence gets easier to clear, so an
+  # unbounded ladder manufactures drops at resolutions never asked for
+  # (SRX10264520 flags 74 cells at 1.2, then another 105 at 1.6 — outside the
+  # sweep). Default the ceiling to the top of `resolutions`.
+  max_recluster_res <- max_recluster_res %||% max(resolutions)
+  r_flag        <- NA_real_       # lowest resolution that flags anything
+  r_recluster   <- NA_real_       # r_flag + recluster_step
+  flagged_grp   <- NULL           # cluster column at r_flag
+  recluster_col <- NULL           # cluster column at r_recluster
+  hyp_cells_1   <- character(0)   # primary drop (clusters flagged at r_flag)
+  hyp_cells_2   <- character(0)   # all confirmatory drops, unioned
+  confirm_rounds <- list()        # round index -> cells taken by that pass
+  sub           <- NULL
+  retained_sub  <- NULL
+
+  graph_names <- paste0(da, c("_nn", "_snn"))
+  snn_name    <- paste0(da, "_snn")
 
   if (!"pca" %in% names(seu@reductions)) {
     warning("No pca reduction in ", sample_id, "; cannot cluster — all cells -> low.")
+  } else if (ncol(seu) < 20) {
+    warning("Fewer than 20 cells in ", sample_id, "; skipping split — all cells -> low.")
   } else {
-    for (round in seq_len(n_iter)) {
-      if (length(pool) < 20) break
-      sub <- seu[, pool]
-      n_cells <- ncol(sub)
-      k_param <- min(20L, n_cells - 1L)
-      graph_names <- paste0(da, c("_nn", "_snn"))
-      sub <- tryCatch(
-        Seurat::FindNeighbors(sub, dims = 1:30, reduction = "pca",
-                              graph.name = graph_names, k.param = k_param,
-                              verbose = FALSE),
-        error = function(e) { warning("FindNeighbors failed round ", round,
-                                      " for ", sample_id, ": ",
-                                      conditionMessage(e)); NULL })
-      if (is.null(sub)) break
+    n_cells <- ncol(seu)
+    sub <- tryCatch(
+      Seurat::FindNeighbors(seu, dims = 1:30, reduction = "pca",
+                            graph.name = graph_names,
+                            k.param = min(20L, n_cells - 1L), verbose = FALSE),
+      error = function(e) { warning("FindNeighbors failed for ", sample_id, ": ",
+                                    conditionMessage(e)); NULL })
 
-      hyp_cells <- character(0)
+    # Sweep coarse -> fine, recording the flagged cell set at EVERY resolution
+    # (all are logged, so the full picture stays inspectable).
+    sweep <- list()
+    if (!is.null(sub)) {
       for (res in resolutions) {
-        grp <- glue::glue("hypsplit_r{round}_res.{res}")
-        sub <- Seurat::FindClusters(sub, graph.name = paste0(da, "_snn"),
+        grp <- glue::glue("hypsplit_res.{res}")
+        sub <- Seurat::FindClusters(sub, graph.name = snn_name,
                                     resolution = res, verbose = FALSE)
         sub@meta.data[[grp]] <- sub$seurat_clusters
         det <- identify_hypoxia_clusters(
@@ -333,30 +501,187 @@ split_hypoxia_by_clusters <- function(hypoxia_seu_path,
           top_markers_n = top_markers_n, mad_k = mad_k,
           min_hyp_markers = min_hyp_markers, max_dom_frac = max_dom_frac,
           return_detail = TRUE)
-        if (is.data.frame(det) && nrow(det) > 0) {
-          det <- cbind(sample_id = sample_id, round = round, resolution = res,
-                       pool_n = n_cells, det, stringsAsFactors = FALSE)
-          log_rows[[length(log_rows) + 1]] <- det
-          hyp_cl <- as.character(det$cluster[det$flagged])
-          if (length(hyp_cl) > 0) {
-            cells_res <- colnames(sub)[as.character(sub@meta.data[[grp]]) %in% hyp_cl]
-            hyp_cells <- union(hyp_cells, cells_res)
-          }
-        }
+        if (!is.data.frame(det) || nrow(det) == 0) next
+        log_rows[[length(log_rows) + 1]] <- cbind(
+          sample_id = sample_id, round = 1L, resolution = res,
+          pool_n = n_cells, det, stringsAsFactors = FALSE)
+
+        hyp_cl <- as.character(det$cluster[det$flagged])
+        cells  <- if (length(hyp_cl) > 0) {
+          colnames(sub)[as.character(sub@meta.data[[grp]]) %in% hyp_cl]
+        } else character(0)
+        sweep[[length(sweep) + 1]] <- list(res = res, grp = grp, cells = cells)
       }
-      if (length(hyp_cells) == 0) break
-      seu$hypoxia_round[colnames(seu) %in% hyp_cells] <- round
-      pool <- setdiff(pool, hyp_cells)
+    }
+
+    # Anchor: the lowest STABLE resolution — the coarsest scale at which the
+    # hypoxic population is actually RESOLVED, not merely first detected.
+    #
+    # "First resolution that flags anything" is not enough. A too-coarse
+    # clustering can detect the hypoxic population while under-resolving it,
+    # capturing only part of it and merging the rest into neighbouring clusters.
+    # SRX10264518 is the worked example: res 0.2 flags a 507-cell cluster, but
+    # from 0.4 up the same population reads a stable ~660 cells — so anchoring at
+    # 0.2 would leave ~24% of it in the low subset. The confirmatory pass cannot
+    # rescue those cells either: once the 507-cell core is removed, the remainder
+    # is diluted and no longer forms an outlier cluster (verified — the pass
+    # flagged nothing).
+    #
+    # So require the anchor to AGREE with the next resolution up: pick the lowest
+    # resolution whose flagged-cell count is within stability_tol of the next
+    # flagging resolution's. For SRX10264518 that selects 0.4 (663 vs 667 at 0.6,
+    # 0.6% apart). Where the count is already stable at the first flagging
+    # resolution (15 of 18 flagging samples in this cohort) the anchor is
+    # unchanged. If nothing ever stabilises (e.g. only the finest resolution
+    # flags), fall back to the resolution flagging the MOST cells, so we never
+    # knowingly under-drop.
+    counts <- vapply(sweep, function(x) length(x$cells), integer(1))
+    pick   <- pick_hypoxia_anchor(counts, stability_tol = stability_tol,
+                                  stability_window = stability_window)
+    if (!is.na(pick) && isTRUE(attr(pick, "fallback"))) {
+      warning(sample_id, " no resolution stabilised within stability_tol (",
+              stability_tol, "); falling back to the max-extent resolution (",
+              sweep[[pick]]$res, ", ", counts[pick], " cells).")
+    }
+    if (!is.na(pick)) {
+      r_flag      <- sweep[[pick]]$res
+      flagged_grp <- sweep[[pick]]$grp
+      hyp_cells_1 <- sweep[[pick]]$cells
+      message(sample_id, " anchor resolution ", r_flag, " (", counts[pick],
+              " cells); sweep counts: ",
+              paste(vapply(sweep, function(x) x$res, numeric(1)), counts,
+                    sep = "=", collapse = ", "))
+    }
+
+    # Confirmatory clean-up, ITERATED TO CONVERGENCE: re-cluster the survivors one
+    # step finer (r_flag + k * recluster_step), drop anything that still flags, and
+    # repeat at the next step up until a pass flags NOTHING. A single pass is not
+    # enough — residual hypoxia may only become separable well above
+    # r_flag + recluster_step (e.g. SRX10264518 flags at 0.2, is clean at 0.6, but
+    # carries a further hypoxic pocket that only separates at 1.0). Iterating until
+    # quiescence is what keeps the low subset — the SCNA/clone input — clean.
+    #
+    # Terminates on the first no-flag pass, or when the pool drops below 20 cells,
+    # the resolution passes max_recluster_res, or max_confirmatory_rounds is hit.
+    if (!is.na(r_flag)) {
+      if (isTRUE(write_diagnostics)) {
+        .write_hypoxia_stage_heatmap(
+          sub, flagged_grp,
+          glue::glue("{sample_id}_hypoxia_rflag{r_flag}_before_seu.rds"))
+      }
+      retained <- setdiff(colnames(sub), hyp_cells_1)
+      if (isTRUE(write_diagnostics) && length(retained) >= 20) {
+        .write_hypoxia_stage_heatmap(
+          sub[, retained], flagged_grp,
+          glue::glue("{sample_id}_hypoxia_rflag{r_flag}_after_seu.rds"))
+      }
+
+      k <- 1L
+      repeat {
+        if (length(retained) < 20) {
+          message(sample_id, " confirmatory stop: fewer than 20 cells left.")
+          break
+        }
+        if (k > max_confirmatory_rounds) {
+          warning(sample_id, " confirmatory pass hit max_confirmatory_rounds (",
+                  max_confirmatory_rounds, ") without converging; residual ",
+                  "hypoxia may remain in the low subset.")
+          break
+        }
+        r_recluster <- round(r_flag + k * recluster_step, 1)  # dodge float noise
+        if (r_recluster > max_recluster_res) {
+          message(sample_id, " confirmatory stop: next resolution (", r_recluster,
+                  ") exceeds max_recluster_res (", max_recluster_res, ").")
+          break
+        }
+        recluster_col <- glue::glue("hypsplit_recluster_res.{r_recluster}")
+
+        retained_sub <- tryCatch({
+          rs <- sub[, retained]
+          # the graph is stale once cells are removed — recompute each pass
+          rs <- Seurat::FindNeighbors(rs, dims = 1:30, reduction = "pca",
+                                      graph.name = graph_names,
+                                      k.param = min(20L, ncol(rs) - 1L),
+                                      verbose = FALSE)
+          rs <- Seurat::FindClusters(rs, graph.name = snn_name,
+                                     resolution = r_recluster, verbose = FALSE)
+          rs@meta.data[[recluster_col]] <- rs$seurat_clusters
+          rs
+        }, error = function(e) {
+          warning("Confirmatory recluster failed for ", sample_id, " at res ",
+                  r_recluster, ": ", conditionMessage(e))
+          NULL
+        })
+        if (is.null(retained_sub)) break
+
+        det2 <- identify_hypoxia_clusters(
+          retained_sub, recluster_col, hypoxia_genes = hypoxia_genes,
+          top_n = top_n, top_markers_n = top_markers_n, mad_k = mad_k,
+          min_hyp_markers = min_hyp_markers, max_dom_frac = max_dom_frac,
+          return_detail = TRUE)
+        if (!is.data.frame(det2) || nrow(det2) == 0) break
+
+        log_rows[[length(log_rows) + 1]] <- cbind(
+          sample_id = sample_id, round = k + 1L, resolution = r_recluster,
+          pool_n = ncol(retained_sub), det2, stringsAsFactors = FALSE)
+
+        # Collage of this pass's clustering, with any flagged cluster still
+        # visible — i.e. the state the plot shows is BEFORE this round's drop.
+        if (isTRUE(write_diagnostics)) {
+          .write_hypoxia_stage_heatmap(
+            retained_sub, recluster_col,
+            glue::glue("{sample_id}_hypoxia_recluster{r_recluster}_seu.rds"))
+        }
+
+        hyp_cl2 <- as.character(det2$cluster[det2$flagged])
+        if (length(hyp_cl2) == 0) {
+          message(sample_id, " confirmatory converged at res ", r_recluster,
+                  " (nothing flagged) after ", k - 1L, " drop round(s).")
+          break
+        }
+
+        cells_k <- colnames(retained_sub)[
+          as.character(retained_sub@meta.data[[recluster_col]]) %in% hyp_cl2]
+
+        if (!isTRUE(confirmatory_drop)) {
+          # log-only mode: record the residual, take nothing, stop.
+          hyp_cells_2 <- cells_k
+          message(sample_id, " residual hypoxia at res ", r_recluster, ": ",
+                  length(cells_k), " cells flagged but NOT dropped ",
+                  "(confirmatory_drop = FALSE); see round = 2 rows in the log.")
+          break
+        }
+
+        confirm_rounds[[as.character(k + 1L)]] <- cells_k
+        hyp_cells_2 <- union(hyp_cells_2, cells_k)
+        retained    <- setdiff(retained, cells_k)
+        k <- k + 1L
+      }
+    }
+  }
+
+  seu$hypoxia_round[colnames(seu) %in% hyp_cells_1] <- 1L
+  if (isTRUE(confirmatory_drop)) {
+    # each confirmatory pass gets its own round index (2, 3, ...) so the log shows
+    # which resolution finally separated each pocket
+    for (rn in names(confirm_rounds)) {
+      seu$hypoxia_round[colnames(seu) %in% confirm_rounds[[rn]]] <- as.integer(rn)
     }
   }
 
   # Per-sample decision log: round x resolution x cluster, with the top-5 marker
   # genes, mean hypoxia_score, the robust-z (median+3*MAD) outlier_fence, and the
-  # is_outlier flag.
+  # is_outlier flag. round = 1 rows are the full coarse-to-fine sweep; round = 2
+  # rows are the confirmatory pass on the survivors at r_flag + recluster_step.
   if (length(log_rows) > 0) {
     tryCatch({
       fs::dir_create("results/hypoxia_cluster_split")
       log_df <- dplyr::bind_rows(log_rows)
+      # Record the chosen anchor on every row so downstream consumers (e.g.
+      # plot_hypoxia_low_res_collages()) can read it straight off the log instead
+      # of re-deriving the stability rule and risking drifting out of sync with it.
+      # NA = nothing flagged for this sample.
+      log_df$anchor_resolution <- r_flag
       readr::write_csv(
         log_df,
         glue::glue("results/hypoxia_cluster_split/{sample_id}_hypoxia_split_log.csv"))
@@ -365,7 +690,10 @@ split_hypoxia_by_clusters <- function(hypoxia_seu_path,
   }
 
   seu$hypoxia_partition <- ifelse(is.na(seu$hypoxia_round), "low", "high")
-  message(sample_id, " hypoxia partition: ",
+  message(sample_id, " hypoxia partition (r_flag=",
+          if (is.na(r_flag)) "none" else r_flag, ", primary=",
+          length(hyp_cells_1), " cells, confirmatory=", length(hyp_cells_2),
+          " cells over ", length(confirm_rounds), " pass(es)): ",
           paste(names(table(seu$hypoxia_partition)),
                 table(seu$hypoxia_partition), sep = "=", collapse = ", "))
 

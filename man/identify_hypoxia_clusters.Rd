@@ -11,6 +11,8 @@ identify_hypoxia_clusters(
   top_n = 20,
   top_markers_n = 5,
   mad_k = 3,
+  min_hyp_markers = 0,
+  max_dom_frac = NULL,
   return_detail = FALSE
 )
 }
@@ -32,6 +34,21 @@ hypoxia-gene overlap columns.}
 
 \item{mad_k}{Robust-z multiplier for the outlier threshold (default 3).}
 
+\item{min_hyp_markers}{Minimum number of hypoxia marker genes a cluster must
+carry in its top-\code{top_n} markers to be flagged, in addition to being a
+score outlier (default 0 = score-only, marker-independent). Set > 0 to
+suppress pure cell-cycle-phase clusters that score high on the
+snoRNA-host-gene-laden hypoxia module without genuine hypoxia markers.}
+
+\item{max_dom_frac}{Direct phase-purity gate. When non-NULL and the object
+carries a \code{Phase} metadata column, a cluster is flagged only if it is
+phase-MIXED — i.e. its dominant cell-cycle-phase fraction is \verb{< max_dom_frac}
+(default \code{NULL} = no phase gate). Set e.g. 0.70 so phase-restricted clusters
+(a single dominant G1/S/G2M phase) are NOT swept into the high-hypoxia
+subset even when they carry hypoxia markers (the snoRNA-host ride-along).
+Clusters with no usable Phase info (\code{dom_frac} NA) are treated permissively
+(the gate does not block them; the marker gate still governs).}
+
 \item{return_detail}{If \code{TRUE}, return the full per-cluster decision table
 (one row per cluster) instead of just the flagged cluster ids.}
 }
@@ -39,8 +56,8 @@ hypoxia-gene overlap columns.}
 By default a character vector of outlier cluster ids (possibly
 empty). With \code{return_detail = TRUE}, a data.frame with columns \code{cluster},
 \code{n_cells}, \code{top_markers}, \code{n_hyp_markers}, \code{matched_genes}, \code{mean_score},
-\code{outlier_fence}, \code{is_outlier}, \code{flagged}. Never errors — returns an empty
-result of the requested shape on failure.
+\code{dom_frac}, \code{outlier_fence}, \code{is_outlier}, \code{phase_mixed}, \code{flagged}. Never
+errors — returns an empty result of the requested shape on failure.
 }
 \description{
 A cluster is flagged hypoxia if its mean \code{hypoxia_score} is a high-side

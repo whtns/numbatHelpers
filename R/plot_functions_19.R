@@ -668,10 +668,16 @@ run_hypoxia_clustering = FALSE, cluster_resolutions = seq(0.2, 1, by = 0.2)) {
 
   seu <- readRDS(seu_path)
 
-  nb_paths <- nb_paths %>%
-    set_names(str_extract(., "SR[RX][0-9]+"))
-
-  nb_path <- nb_paths[[tumor_id]]
+  # nb_paths = NULL is a supported call (no numbat run for this object, e.g. the
+  # hypoxia-split stage diagnostics) -> no clone tree. Guard both the set_names
+  # (which errors on NULL) and the lookup (which errors on an absent name).
+  nb_path <- if (is.null(nb_paths) || length(nb_paths) == 0) {
+    NULL
+  } else {
+    nb_paths <- nb_paths %>%
+      set_names(str_extract(., "SR[RX][0-9]+"))
+    if (tumor_id %in% names(nb_paths)) nb_paths[[tumor_id]] else NULL
+  }
 
   if (!is.null(cluster_order)) {
     group.by <- unique(cluster_order$resolution)
@@ -803,7 +809,7 @@ run_hypoxia_clustering = FALSE, cluster_resolutions = seq(0.2, 1, by = 0.2)) {
     dplyr::ungroup() %>%
     left_join(giotti_genes, by = c("Gene.Name" = "symbol")) %>%
     # select(Gene.Name, term) %>%
-    dplyr::mutate(term = replace_na(term, "")) %>%
+    dplyr::mutate(term = tidyr::replace_na(term, "")) %>%
     dplyr::distinct(Gene.Name, .keep_all = TRUE)
 
   # No marker features survived the VariableFeatures/logFC filters -> a 0-row
