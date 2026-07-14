@@ -19,6 +19,15 @@ tabulate_diffex_clones <- function(cluster_diffex_clones,
                                    total_diffex_clones,
                                    total_xlsx = "results/straight_diffex_bw_clones_large.xlsx",
                                    total_by_chr_xlsx = "results/straight_diffex_bw_clones_large_by_chr.xlsx") {
+  # Drop skipped samples (NA_character_) and unwritten files before anything reads
+  # them as filenames -- see .drop_missing_paths().
+  cluster_diffex_clones <- .drop_missing_paths(cluster_diffex_clones)
+  total_diffex_clones   <- .drop_missing_paths(total_diffex_clones)
+  if (length(cluster_diffex_clones) == 0 && length(total_diffex_clones) == 0) {
+    message("tabulate_diffex_clones: no usable diffex CSVs, returning NULL")
+    return(invisible(NULL))
+  }
+
   kooi_candidates <- read_csv("data/kooi_candidates.csv")
 
   cc_genes <- Seurat::cc.genes %>%
@@ -203,7 +212,14 @@ make_volcano_diffex_clones <- function(cluster_diffex_clones,
                                        cluster_pdf = "results/diffex_bw_clones_per_cluster_large.pdf",
                                        total_diffex_clones,
                                        total_pdf = "results/straight_diffex_bw_clones_large.pdf") {
-  #
+  # Drop skipped samples (NA_character_) and unwritten files before anything reads
+  # them as filenames -- see .drop_missing_paths().
+  cluster_diffex_clones <- .drop_missing_paths(cluster_diffex_clones)
+  total_diffex_clones   <- .drop_missing_paths(total_diffex_clones)
+  if (length(cluster_diffex_clones) == 0 && length(total_diffex_clones) == 0) {
+    message("make_volcano_diffex_clones: no usable diffex CSVs, returning NULL")
+    return(invisible(NULL))
+  }
 
   kooi_candidates <- read_csv("data/kooi_candidates.csv")
 

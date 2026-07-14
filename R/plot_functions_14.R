@@ -87,15 +87,9 @@ drop_mt_cluster <- function(seu, group.by = "integrated_snn_res.0.4"){
 #' @return ggplot2 plot object
 #' @export
 plot_fig_07_08 <- function(figure_input, x_var = "sample_cluster", plot_title = "fig_07", p_adj_threshold = 0.1, plot_path = "results/fig_07.pdf", ...){
-	paths <- unlist(figure_input)
-
-	# find_diffex_bw_clones_for_each_cluster() returns NA_character_ for a sample with
-	# nothing to compare -- no numbat run, or no clone comparison carrying the
-	# requested SCNA (e.g. SRX10831287 has only an 11a+ comparison, so it has no 1q+).
-	# That is a legitimate skip, not a failure, but read_csv() takes the NA as a
-	# filename and dies with "'NA' does not exist in current working directory",
-	# which errored the whole fig_1q/fig_16q target.
-	paths <- paths[!is.na(paths) & nzchar(paths) & file.exists(paths)]
+	# Drop skipped samples (NA_character_) and unwritten files before read_csv() takes
+	# an NA as a filename -- see .drop_missing_paths().
+	paths <- .drop_missing_paths(figure_input)
 
 	if (length(paths) == 0) {
 		message("plot_fig_07_08: no usable input CSVs, returning NULL")
