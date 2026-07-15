@@ -37,7 +37,7 @@ enrich_oncoprints <- function(large_filter_expressions, cluster_dictionary, inte
   }
 
   # cis ------------------------------
-  names(cis_diffex_clones) <- interesting_samples
+  cis_diffex_clones <- .name_by_sample(cis_diffex_clones, interesting_samples, "cis_diffex_clones")
 
   add_clone_comparison_column <- function(df, mycomparison) {
     dplyr::mutate(df, clone_comparison = mycomparison)
@@ -90,7 +90,7 @@ enrich_oncoprints <- function(large_filter_expressions, cluster_dictionary, inte
     identity()
 
   # trans ------------------------------
-  names(trans_diffex_clones) <- interesting_samples
+  trans_diffex_clones <- .name_by_sample(trans_diffex_clones, interesting_samples, "trans_diffex_clones")
 
   trans_diffex_clones <- purrr::map(trans_diffex_clones, ~ purrr::imap(.x, add_clone_comparison_column))
 
@@ -134,7 +134,7 @@ enrich_oncoprints <- function(large_filter_expressions, cluster_dictionary, inte
     identity()
 
   # all ------------------------------
-  names(all_diffex_clones) <- interesting_samples
+  all_diffex_clones <- .name_by_sample(all_diffex_clones, interesting_samples, "all_diffex_clones")
 
   all_diffex_clones <- purrr::map(all_diffex_clones, ~ purrr::imap(.x, add_clone_comparison_column))
 
@@ -231,7 +231,7 @@ enrich_oncoprints_clusters <- function(large_filter_expressions, cluster_diction
   }
 
   # cis ------------------------------
-  names(cis_diffex_clones_for_each_cluster) <- interesting_samples
+  cis_diffex_clones_for_each_cluster <- .name_by_sample(cis_diffex_clones_for_each_cluster, interesting_samples, "cis_diffex_clones_for_each_cluster")
 
   cis_diffex_clones_for_each_cluster <-
     cis_diffex_clones_for_each_cluster %>%
@@ -269,7 +269,7 @@ enrich_oncoprints_clusters <- function(large_filter_expressions, cluster_diction
 
   # trans ------------------------------
 
-  names(trans_diffex_clones_for_each_cluster) <- interesting_samples
+  trans_diffex_clones_for_each_cluster <- .name_by_sample(trans_diffex_clones_for_each_cluster, interesting_samples, "trans_diffex_clones_for_each_cluster")
 
   trans_diffex_clones_for_each_cluster <-
     trans_diffex_clones_for_each_cluster %>%

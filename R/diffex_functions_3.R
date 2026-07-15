@@ -75,9 +75,9 @@ filter_diffex <- function(df, n_slice = 10) {
     return(test1)
   }
 
-  names(cis_diffex_clones) <- interesting_samples
-  names(trans_diffex_clones) <- interesting_samples
-  names(all_diffex_clones) <- interesting_samples
+  cis_diffex_clones   <- .name_by_sample(cis_diffex_clones,   interesting_samples, "cis_diffex_clones")
+  trans_diffex_clones <- .name_by_sample(trans_diffex_clones, interesting_samples, "trans_diffex_clones")
+  all_diffex_clones   <- .name_by_sample(all_diffex_clones,   interesting_samples, "all_diffex_clones")
 
   
 #' Perform differential expression analysis
