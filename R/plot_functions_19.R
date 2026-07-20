@@ -559,7 +559,7 @@ plot_seu_marker_heatmap_by_scna <- function(seu_path = NULL, cluster_order = NUL
 }
 
 subset_seu_by_expression <- function(seu_path, hypoxia_expr = NULL,
-run_hypoxia_clustering = FALSE, cluster_resolutions = seq(0.2, 1, by = 0.2), assay = "SCT", slug = "hypoxia_low") {
+run_hypoxia_clustering = FALSE, cluster_resolutions = seq(0.2, 1, by = 0.2), assay = "SCT", slug = "hypoxia_low", recompute_pca = FALSE) {
   if (is.na(seu_path)) return(NA_character_)
 
   seu <- readRDS(seu_path)
@@ -595,6 +595,32 @@ run_hypoxia_clustering = FALSE, cluster_resolutions = seq(0.2, 1, by = 0.2), ass
         seu <- Seurat::NormalizeData(seu, assay = assay, verbose = FALSE)
       }
       k_param <- min(20L, n_cells - 1L)
+
+      # Recompute the PCA on the surviving (hypoxia-subsetted) cells so the
+      # embedding -- and every cluster column derived from it below, plus the UMAP
+      # -- reflects the retained population, instead of the PCA inherited from the
+      # full pre-split object (whose axes are partly defined by the now-removed
+      # cells). SCT-based to match the parent PCA and the collage/heatmap assay.
+      # Also refresh the SCT_snn_res.* columns the collages read: this function
+      # otherwise clusters only `assay` (e.g. "gene" for the low object), leaving
+      # SCT_snn_res.* inherited/stale. Guarded so a RunPCA failure degrades to the
+      # inherited PCA rather than aborting the split.
+      if (isTRUE(recompute_pca)) {
+        seu <- tryCatch(
+          Seurat::RunPCA(seu, assay = "SCT", npcs = 30, verbose = FALSE),
+          error = function(e) {
+            warning("recompute_pca RunPCA(SCT) failed on ", seu_path, ": ",
+                    conditionMessage(e), "; keeping inherited PCA")
+            seu
+          })
+        seu <- Seurat::FindNeighbors(seu, dims = 1:30, reduction = "pca",
+                                     graph.name = c("SCT_nn", "SCT_snn"),
+                                     k.param = k_param)
+        for (res in cluster_resolutions) {
+          seu <- Seurat::FindClusters(seu, graph.name = "SCT_snn", resolution = res)
+        }
+      }
+
       graph_names <- paste0(assay, c("_nn", "_snn"))
       seu <- Seurat::FindNeighbors(seu, dims = 1:30, reduction = "pca", graph.name = graph_names, k.param = k_param)
       for (res in cluster_resolutions) {
@@ -640,11 +666,11 @@ run_hypoxia_clustering = FALSE, cluster_resolutions = seq(0.2, 1, by = 0.2), ass
   return(new_filepath)
 }
 
-plot_seu_marker_heatmap <- function(seu_path = NULL, cluster_order = NULL, 
-nb_paths = NULL, clone_simplifications = NULL, group.by = "SCT_snn_res.0.6", 
-assay = "SCT", label = "_filtered_", height = 10, width = 18, 
-equalize_scna_clones = FALSE, 
-phase_levels = c("pm", "g1", "g1_s", "s", "s_g2", "g2", "g2_m", "hsp", "hypoxia", "other", "s_star"), 
+plot_seu_marker_heatmap <- function(seu_path = NULL, cluster_order = NULL,
+nb_paths = NULL, clone_simplifications = NULL, group.by = "SCT_snn_res.0.6",
+assay = "SCT", label = "_filtered_", height = 10, width = 18,
+equalize_scna_clones = FALSE, display_cells = NULL,
+phase_levels = c("pm", "g1", "g1_s", "s", "s_g2", "g2", "g2_m", "hsp", "hypoxia", "other", "s_star"),
 kept_phases = NULL, tmp_plot_path = FALSE, hypoxia_expr = NULL,
 run_hypoxia_clustering = FALSE, cluster_resolutions = seq(0.2, 1, by = 0.2)) {
   kept_phases <- kept_phases %||% phase_levels
@@ -800,6 +826,24 @@ run_hypoxia_clustering = FALSE, cluster_resolutions = seq(0.2, 1, by = 0.2)) {
     seu$clone <- factor(.clone)
   } else {
     seu$clone <- factor("none")
+  }
+
+  # Lock-to-full display: the cluster levels, ordering, phase labels, and marker
+  # rows (heatmap_features) above were ALL derived on the full object handed in.
+  # If the caller asked to display only a subset of cells (e.g. a two-clone
+  # comparison), subset NOW -- after everything cell-count-dependent is fixed --
+  # so every panel shows the same clusters / marker rows / order as the full-object
+  # collage, restricted to those cells. The `clusters` factor keeps its full levels
+  # (no fct_drop here), so a cluster absent from the subset retains its identity in
+  # the row split and ordering rather than being renumbered.
+  if (!is.null(display_cells)) {
+    keep_cells <- intersect(colnames(seu), display_cells)
+    if (length(keep_cells) < 1L) {
+      warning("display_cells matched no cells in ", seu_path,
+              "; skipping marker heatmap collage.")
+      return(NA_character_)
+    }
+    seu <- seu[, keep_cells]
   }
 
   giotti_genes <- read_giotti_genes()

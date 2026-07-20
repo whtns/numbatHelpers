@@ -710,7 +710,11 @@ split_hypoxia_by_clusters <- function(hypoxia_seu_path,
     subset_seu_by_expression(
       labeled_path, run_hypoxia_clustering = TRUE,
       hypoxia_expr = "hypoxia_partition == 'low'",
-      slug = "hypoxia_low", assay = low_assay),
+      slug = "hypoxia_low", assay = low_assay,
+      # recompute the PCA on the low-hypoxia cells so the persisted clusters
+      # (SCT_snn_res.* read by the collages, and gene_snn_res.*) are defined on
+      # the retained population, not the inherited pre-split PCA
+      recompute_pca = TRUE),
     error = function(e) {
       warning(sample_id, " low partition failed: ", conditionMessage(e))
       NA_character_

@@ -35,7 +35,21 @@
 #' @param step Resolution increment above the anchor (default 0.4).
 #' @param fallback Resolutions used when the sample flagged nothing
 #'   (default `c(0.6, 1.0)`).
+#' @param resolutions Optional explicit resolution vector. When supplied, the
+#'   anchor logic is bypassed entirely and a collage is emitted at each of these
+#'   resolutions (clustering on demand when the `<assay>_snn_res.<r>` column is
+#'   absent). Use e.g. `seq(0.2, 1.2, 0.2)` for a full sweep. Default `NULL`
+#'   keeps the anchor + `step` (or `fallback`) behaviour.
 #' @param assay Assay whose `<assay>_snn_res.<r>` columns are used (default "SCT").
+#' @param recompute_pca When `TRUE`, recompute a fresh PCA on the (already
+#'   hypoxia-subsetted) low object and re-cluster EVERY requested resolution on
+#'   it, instead of using the persisted `<assay>_snn_res.<r>` columns. Those
+#'   persisted columns were clustered in the PCA inherited from the full pre-split
+#'   object (PCA is not recomputed by `subset_seu_by_expression()`), so the
+#'   surviving cells are clustered on axes partly defined by the removed
+#'   high-hypoxia cells; a fresh PCA re-orients the axes to the retained
+#'   population and yields cleaner clusters at higher resolution. Falls back to
+#'   the persisted-column path if the PCA recompute fails. Default `FALSE`.
 #' @return Character vector of the PDF paths written (`NA_character_` per failed
 #'   resolution). Never errors — collages are best-effort.
 #' @export
@@ -45,12 +59,19 @@ plot_hypoxia_low_res_collages <- function(low_seu_path,
                                           split_log_dir = "results/hypoxia_cluster_split",
                                           step = 0.4,
                                           fallback = c(0.6, 1.0),
-                                          assay = "SCT") {
+                                          resolutions = NULL,
+                                          assay = "SCT",
+                                          recompute_pca = FALSE) {
   if (is.null(low_seu_path) || length(low_seu_path) == 0 ||
       is.na(low_seu_path) || !file.exists(low_seu_path)) {
     return(NA_character_)
   }
   sample_id <- stringr::str_extract(low_seu_path, "SR[RX][0-9]+")
+
+  # Explicit resolution override: skip the split-log anchor lookup entirely.
+  resolutions_override <- if (!is.null(resolutions)) {
+    as.numeric(resolutions)
+  } else NULL
 
   # Anchor from the split log. Prefer the recorded anchor_resolution column; for
   # logs written before that column existed, recompute it from the round-1 sweep
@@ -76,35 +97,63 @@ plot_hypoxia_low_res_collages <- function(low_seu_path,
     }
   }, error = function(e) NA_real_)
 
-  resolutions <- if (is.na(anchor)) {
+  resolutions <- if (!is.null(resolutions_override)) {
+    resolutions_override
+  } else if (is.na(anchor)) {
     as.numeric(fallback)
   } else {
     c(anchor, round(anchor + step, 1))  # round: 0.2 + 0.4 = 0.6000000000000001
   }
   message(sample_id, " low-hypoxia collages at res ",
           paste(resolutions, collapse = " and "),
+          if (!is.null(resolutions_override)) " (explicit resolutions)" else
           if (is.na(anchor)) " (no clusters dropped -> fallback pair)" else
             glue::glue(" (anchor {anchor})"))
 
   seu <- readRDS(low_seu_path)
   if (assay %in% names(seu@assays)) Seurat::DefaultAssay(seu) <- assay
 
+  # Recompute the PCA on the surviving (low-hypoxia) cells and rebuild the SNN
+  # graph on it, so every resolution below is clustered in an embedding defined by
+  # the retained population rather than the inherited pre-split PCA. Guarded: on
+  # any failure fall back to the persisted-column / inherited-PCA path.
+  snn_name <- glue::glue("{assay}_snn")
+  if (isTRUE(recompute_pca)) {
+    recompute_pca <- tryCatch({
+      seu <- Seurat::RunPCA(seu, assay = assay, npcs = 30, verbose = FALSE)
+      seu <- Seurat::FindNeighbors(seu, dims = 1:30, reduction = "pca",
+                                   graph.name = paste0(assay, c("_nn", "_snn")),
+                                   verbose = FALSE)
+      message(sample_id, ": recomputed PCA on ", ncol(seu),
+              " low-hypoxia cells; re-clustering all resolutions on it")
+      TRUE
+    }, error = function(e) {
+      message("!! ", sample_id, ": PCA recompute failed (", conditionMessage(e),
+              "); falling back to persisted clusters")
+      FALSE
+    })
+  }
+
   purrr::map_chr(resolutions, function(res) {
     tryCatch({
       col <- glue::glue("{assay}_snn_res.{res}")
       s   <- seu
-      # subset_seu_by_expression() clusters the low object over seq(0.2, 1, 0.2),
-      # so an anchor of 1.2 (or anchor + step above 1.0) has no column -- cluster
-      # on demand rather than silently falling back to a resolution we did not ask
-      # for.
-      if (!col %in% colnames(s@meta.data)) {
-        snn <- glue::glue("{assay}_snn")
-        if (!snn %in% names(s@graphs)) {
+      if (isTRUE(recompute_pca)) {
+        # Fresh PCA + graph already on `seu`: cluster this resolution on it,
+        # ignoring any inherited persisted column (which used the old PCA).
+        s <- Seurat::FindClusters(s, graph.name = snn_name, resolution = res,
+                                  verbose = FALSE)
+        s@meta.data[[col]] <- s$seurat_clusters
+      } else if (!col %in% colnames(s@meta.data)) {
+        # subset_seu_by_expression() clusters the low object over seq(0.2, 1, 0.2),
+        # so a resolution above 1.0 has no column -- cluster on demand rather than
+        # silently falling back to a resolution we did not ask for.
+        if (!snn_name %in% names(s@graphs)) {
           s <- Seurat::FindNeighbors(s, dims = 1:30, reduction = "pca",
                                      graph.name = paste0(assay, c("_nn", "_snn")),
                                      verbose = FALSE)
         }
-        s <- Seurat::FindClusters(s, graph.name = snn, resolution = res,
+        s <- Seurat::FindClusters(s, graph.name = snn_name, resolution = res,
                                   verbose = FALSE)
         s@meta.data[[col]] <- s$seurat_clusters
       }
