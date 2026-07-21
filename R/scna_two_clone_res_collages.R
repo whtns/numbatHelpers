@@ -23,17 +23,25 @@
 #' immediately preceding clone) and emits a marker-heatmap + phase-scatter collage
 #' at each requested resolution.
 #'
-#' No PCA or clustering is performed here: the persisted `<assay>_snn_res.<r>`
-#' columns (written by the hypoxia split, which recomputes PCA on the low-hypoxia
-#' population) are read as-is. Moreover the collage is a true ZOOM of the
-#' full-population collage: cluster order, phase labels, and marker-gene rows are
-#' all derived on the FULL low object inside [plot_seu_marker_heatmap()], which is
-#' then handed `display_cells` and restricts every panel to the two compared clones
-#' only at the end. So the two-clone panels carry exactly the same cluster IDs,
-#' marker rows, and ordering as the full collage -- just fewer cells. The default
-#' resolution sweep (0.2..0.8) mirrors the full low-hypoxia sweep so every
-#' two-clone panel has a same-resolution full-population twin. Resolutions the
-#' split did not persist are skipped, never clustered on demand.
+#' The object is restricted to the two compared clones FIRST, and the PCA, SNN
+#' graph, and clusters are then recomputed on that subset -- so the clustering
+#' reflects structure among the cells actually under analysis rather than
+#' structure of the whole low-hypoxia population. Cluster order, phase labels, and
+#' marker-gene rows are likewise derived on the subset inside
+#' [plot_seu_marker_heatmap()].
+#'
+#' Consequence: cluster IDs are NOT comparable with the full-population collage,
+#' nor across SCNAs for the same sample -- each two-clone collage is its own
+#' re-analysis. (This replaced an earlier "lock to full" behaviour, where the
+#' persisted `<assay>_snn_res.<r>` columns were read as-is and the panels were
+#' merely restricted to the two clones at the end, making the collage a true zoom
+#' of the full one. If you need that view back, [plot_seu_marker_heatmap()] still
+#' accepts `display_cells`, which is what implemented it.)
+#'
+#' Because the clusters are computed here, any requested resolution works --
+#' nothing depends on which `<assay>_snn_res.<r>` columns the hypoxia split
+#' happened to persist. The default sweep (0.2..0.8) still mirrors the full
+#' low-hypoxia sweep so every two-clone panel has a same-resolution twin.
 #'
 #' Output naming follows [plot_seu_marker_heatmap()]'s `label`, e.g.
 #' `results/<SRX>_hypoxia_low_seu.rds__1q_res0.2_heatmap_phase_scatter_patchwork.pdf`.
@@ -124,32 +132,9 @@ plot_scna_two_clone_res_collages <- function(seu_path,
     unname(scna_label_map[as.character(seu@meta.data$clone_opt)]),
     levels = scna_lvls)
 
-  # Use ONLY the cluster columns the hypoxia split already persisted on this low
-  # object (its PCA was recomputed on the low-hypoxia population upstream). No PCA
-  # and no FindClusters happen here, so the two-clone collages show exactly the
-  # clusters of the full-population low-hypoxia collages -- just restricted to the
-  # two compared clones. Any requested resolution the split did not persist is
-  # skipped, never clustered on demand.
-  have <- purrr::map_lgl(resolutions, function(res)
-    glue::glue("{assay}_snn_res.{res}") %in% colnames(seu@meta.data))
-  if (any(!have)) {
-    message(sample_id, " ", scna_of_interest, ": no persisted ", assay,
-            "_snn_res column for res ", paste(resolutions[!have], collapse = " "),
-            " -> skipping those (not clustering on demand)")
-  }
-  resolutions <- resolutions[have]
-  if (length(resolutions) == 0) {
-    message(sample_id, " ", scna_of_interest,
-            ": none of the requested resolutions are persisted -> skip")
-    return(NA_character_)
-  }
-
-  # Identify the two clones' cells to DISPLAY. We do NOT subset the object here:
-  # plot_seu_marker_heatmap() derives the cluster order, phase labels, and
-  # marker-gene rows on the FULL low object (identical to the full-population
-  # collage) and only then restricts every panel to `display_cells`. So the
-  # two-clone collage is a true zoom of the full collage -- same cluster IDs, same
-  # marker rows, same order -- rather than a re-analysis of the two-clone slice.
+  # Restrict to the two compared clones BEFORE any dimensionality reduction, so
+  # every downstream step -- PCA, SNN graph, clusters, marker selection, cluster
+  # order, phase labels -- is computed on the cells actually under analysis.
   keep <- as.character(seu@meta.data$clone_opt) %in% retained_clones
   n_keep <- sum(keep, na.rm = TRUE)
   if (n_keep < 20) {
@@ -158,30 +143,63 @@ plot_scna_two_clone_res_collages <- function(seu_path,
             " -> skip")
     return(NA_character_)
   }
-  display_cells <- colnames(seu)[which(keep)]
+  seu <- seu[, colnames(seu)[which(keep)]]
   message(sample_id, " ", scna_of_interest, " two-clone collages (clones ",
           paste(retained_clones, collapse = " vs "), ", ", n_keep,
           " cells) at res ", paste(resolutions, collapse = " "))
+
+  # Fresh PCA + SNN graph on the two-clone subset. npcs and k.param must stay
+  # below the cell count or Seurat errors outright on the small subsets these
+  # comparisons routinely produce, so both are clamped. On any failure fall back to
+  # the persisted (full-population) columns rather than losing the collage --
+  # mirrors the guarded recompute in plot_hypoxia_low_res_collages().
+  snn_name <- glue::glue("{assay}_snn")
+  npcs     <- max(2L, min(30L, ncol(seu) - 1L))
+  k_param  <- max(2L, min(20L, ncol(seu) - 1L))
+  recomputed <- tryCatch({
+    seu <- Seurat::RunPCA(seu, assay = assay, npcs = npcs, verbose = FALSE)
+    seu <- Seurat::FindNeighbors(seu, dims = 1:npcs, reduction = "pca",
+                                 k.param = k_param,
+                                 graph.name = paste0(assay, c("_nn", "_snn")),
+                                 verbose = FALSE)
+    message(sample_id, " ", scna_of_interest, ": recomputed PCA on ", ncol(seu),
+            " two-clone cells (npcs ", npcs, ", k ", k_param,
+            "); clustering all resolutions on it")
+    TRUE
+  }, error = function(e) {
+    message("!! ", sample_id, " ", scna_of_interest, ": PCA recompute failed (",
+            conditionMessage(e), "); falling back to persisted clusters")
+    FALSE
+  })
 
   purrr::map_chr(resolutions, function(res) {
     tryCatch({
       col <- glue::glue("{assay}_snn_res.{res}")
       s   <- seu
+      if (isTRUE(recomputed)) {
+        s <- Seurat::FindClusters(s, graph.name = snn_name, resolution = res,
+                                  verbose = FALSE)
+        s@meta.data[[col]] <- s$seurat_clusters
+      } else if (!col %in% colnames(s@meta.data)) {
+        message(sample_id, " ", scna_of_interest, ": no ", col,
+                " and no usable PCA -> skip res ", res)
+        return(NA_character_)
+      }
       # dummy_cluster_order()/group.by key on SCT_snn_res.0.6, so copy the
-      # requested resolution's clusters into that column ON THE FULL object.
+      # requested resolution's clusters into that column.
       s@meta.data[["SCT_snn_res.0.6"]] <- factor(as.character(s@meta.data[[col]]))
 
       # Temp copy keeps the source basename so plot_seu_marker_heatmap() derives a
-      # predictable output name; the SCNA + resolution ride in `label`. The FULL
-      # object is written -- markers/order/phase are computed on it, then the panels
-      # are restricted to `display_cells` inside plot_seu_marker_heatmap().
+      # predictable output name; the SCNA + resolution ride in `label`. The object
+      # written here is already the two-clone subset, so no display_cells is
+      # needed -- markers, order, and phase are derived from these cells alone.
       tmp <- file.path(tempdir(), basename(seu_path))
       saveRDS(s, tmp)
 
       plot_seu_marker_heatmap(
         tmp, cluster_order = NULL, nb_paths = nb_paths,
         clone_simplifications = clone_simplifications,
-        display_cells = display_cells, bar_var = "scna_status",
+        bar_var = "scna_status",
         label = glue::glue("_{scna_of_interest}_res{res}_"))
 
       expected <- glue::glue(
