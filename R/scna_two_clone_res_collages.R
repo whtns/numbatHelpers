@@ -93,6 +93,21 @@ plot_scna_two_clone_res_collages <- function(seu_path,
     return(NA_character_)
   }
 
+  # SCNA-of-interest status label per clone for the stacked-bar panel: the
+  # acquiring clone N gets the signed SCNA token from the comparison name
+  # (e.g. "1q+", "16q-"), the immediately-preceding clone M gets "preceding",
+  # each tagged with its numbat clone id -> e.g. "1q+ (clone 2)" /
+  # "preceding (clone 1)". Parsed per matching comparison (usually one).
+  scna_label_map <- character(0)
+  for (cmp in comp) {
+    pair <- stringr::str_split(stringr::str_extract(cmp, "[0-9]+_v_[0-9]+"),
+                               "_v_", simplify = TRUE)
+    if (length(pair) < 2) next
+    signed <- stringr::str_remove(cmp, "^[0-9]+_v_[0-9]+_")  # "1q+", "16q-", ...
+    scna_label_map[pair[1]] <- glue::glue("{signed} (clone {pair[1]})")
+    scna_label_map[pair[2]] <- glue::glue("preceding (clone {pair[2]})")
+  }
+
   seu <- readRDS(seu_path)
   if (assay %in% names(seu@assays)) Seurat::DefaultAssay(seu) <- assay
 
@@ -100,6 +115,14 @@ plot_scna_two_clone_res_collages <- function(seu_path,
     message(sample_id, ": no clone_opt column -> skip")
     return(NA_character_)
   }
+
+  # Attach the SCNA-of-interest status label the stacked-bar panel groups by
+  # (bar_var = "scna_status"). Non-retained clones -> NA (they are not displayed).
+  # Levels order the acquiring (signed) label before "preceding".
+  scna_lvls <- unique(unname(scna_label_map[order(grepl("^preceding", scna_label_map))]))
+  seu@meta.data$scna_status <- factor(
+    unname(scna_label_map[as.character(seu@meta.data$clone_opt)]),
+    levels = scna_lvls)
 
   # Use ONLY the cluster columns the hypoxia split already persisted on this low
   # object (its PCA was recomputed on the low-hypoxia population upstream). No PCA
@@ -158,7 +181,7 @@ plot_scna_two_clone_res_collages <- function(seu_path,
       plot_seu_marker_heatmap(
         tmp, cluster_order = NULL, nb_paths = nb_paths,
         clone_simplifications = clone_simplifications,
-        display_cells = display_cells,
+        display_cells = display_cells, bar_var = "scna_status",
         label = glue::glue("_{scna_of_interest}_res{res}_"))
 
       expected <- glue::glue(

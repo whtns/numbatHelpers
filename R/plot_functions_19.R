@@ -669,7 +669,7 @@ run_hypoxia_clustering = FALSE, cluster_resolutions = seq(0.2, 1, by = 0.2), ass
 plot_seu_marker_heatmap <- function(seu_path = NULL, cluster_order = NULL,
 nb_paths = NULL, clone_simplifications = NULL, group.by = "SCT_snn_res.0.6",
 assay = "SCT", label = "_filtered_", height = 10, width = 18,
-equalize_scna_clones = FALSE, display_cells = NULL,
+equalize_scna_clones = FALSE, display_cells = NULL, bar_var = "clone",
 phase_levels = c("pm", "g1", "g1_s", "s", "s_g2", "g2", "g2_m", "hsp", "hypoxia", "other", "s_star"),
 kept_phases = NULL, tmp_plot_path = FALSE, hypoxia_expr = NULL,
 run_hypoxia_clustering = FALSE, cluster_resolutions = seq(0.2, 1, by = 0.2)) {
@@ -945,8 +945,17 @@ run_hypoxia_clustering = FALSE, cluster_resolutions = seq(0.2, 1, by = 0.2)) {
 
   labels <- data.frame(clone = unique(seu$clone), label = as.character(unique(seu$clone)))
 
+  # bar_var selects the metadata column the stacked-bar panel groups by. Default
+  # "clone" (numbat clone_opt). Callers can pass a custom column (e.g. an
+  # SCNA-of-interest status label) to relabel the bars; fall back to "clone" if the
+  # requested column is absent so the panel never errors.
+  bar_var_use <- if (!is.null(bar_var) && bar_var %in% colnames(seu@meta.data)) {
+    bar_var
+  } else {
+    "clone"
+  }
   clone_distribution_plot <-
-    plot_distribution_of_clones_across_clusters(seu, tumor_id, var_x = "clone", var_y = "clusters", reverse_fill = TRUE)
+    plot_distribution_of_clones_across_clusters(seu, tumor_id, var_x = bar_var_use, var_y = "clusters", reverse_fill = TRUE)
 
   umap_plots <- DimPlot(seu, group.by = c("clone", "clusters"), combine = FALSE) %>%
     # map(~(.x + theme(legend.position = "bottom"))) %>%
