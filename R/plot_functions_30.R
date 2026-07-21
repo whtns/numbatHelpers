@@ -16,10 +16,21 @@ find_diffex_clones <- function(seu_path, numbat_rds_files, large_clone_compariso
   #
   tumor_id <- str_extract(seu_path, "SR[RX][0-9]+")
 
-  sample_id <- str_remove(fs::path_file(seu_path), "_filtered_seu.*")
+  # Must strip the *_hypoxia_low_seu.rds suffix too -- see .seu_sample_id(). The
+  # old "_filtered_seu.*"-only pattern left the whole filename as the id, so
+  # large_clone_comparisons[[sample_id]] was NULL for every low-hypoxia object and
+  # this function returned an empty list for all 33 samples without erroring.
+  sample_id <- .seu_sample_id(seu_path)
 
   numbat_rds_files <- numbat_rds_files %>%
     set_names(str_extract(., "SR[RX][0-9]+"))
+
+  # A sample with no numbat run has no clones to compare; skip rather than let
+  # `[[` error on an absent name.
+  if (!tumor_id %in% names(numbat_rds_files)) {
+    warning(sample_id, ": no numbat rds; skipping clone diffex.")
+    return(list())
+  }
 
   mynb <- readRDS(numbat_rds_files[[tumor_id]])
 

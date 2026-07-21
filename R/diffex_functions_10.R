@@ -61,29 +61,39 @@ annotate_cluster_membership <- function(diffex_1, diffex_2, new_col_name) {
 tally_kooi_candidates <- function(cis_diffex_clones = "results/diffex_bw_clones_large_in_segment_by_chr.xlsx", trans_diffex_clones = "results/diffex_bw_clones_trans_by_chr.xlsx") {
   #
 
-  cis_diffex_clones <-
-    cis_diffex_clones %>%
-    excel_sheets() %>%
-    set_names() %>%
-    map(read_excel, path = cis_diffex_clones) %>%
-    map(dplyr::filter, !is.na(kooi_region))
-
-  cis_diffex_clones <-
-    cis_diffex_clones[map_lgl(cis_diffex_clones, ~ (nrow(.x) > 0))] %>%
-    dplyr::bind_rows(.id = "chr")
-
-  trans_diffex_clones <-
-    trans_diffex_clones %>%
-    excel_sheets() %>%
-    set_names() %>%
-    map(read_excel, path = trans_diffex_clones) %>%
-    map(dplyr::filter, !is.na(kooi_region))
-
-  trans_diffex_clones <-
-    trans_diffex_clones[map_lgl(trans_diffex_clones, ~ (nrow(.x) > 0))] %>%
-    dplyr::bind_rows(.id = "chr")
+  cis_diffex_clones   <- .read_kooi_sheets(cis_diffex_clones,   "cis")
+  trans_diffex_clones <- .read_kooi_sheets(trans_diffex_clones, "trans")
 
   return(list("cis" = cis_diffex_clones, "trans" = trans_diffex_clones))
+}
+
+# Read every sheet of a by-chr diffex workbook and keep the Kooi-candidate rows.
+#
+# write_xlsx() given an empty list writes a placeholder workbook with a single
+# empty "Sheet1", which has no columns at all -- so the bare
+# `filter(!is.na(kooi_region))` died with "object 'kooi_region' not found" and
+# took found_kooi_candidates down with it. A workbook with nothing to tally is a
+# legitimate state (it means the straight/total diffex found nothing), so skip
+# sheets that lack the column and return a typed empty frame rather than erroring.
+.read_kooi_sheets <- function(path, what) {
+  if (!file.exists(path)) {
+    warning("tally_kooi_candidates: ", what, " workbook missing (", path, "); returning no candidates.")
+    return(tibble::tibble(chr = character(0), kooi_region = character(0)))
+  }
+
+  sheets <- readxl::excel_sheets(path) %>% set_names()
+  tabs <- map(sheets, readxl::read_excel, path = path)
+
+  usable <- map_lgl(tabs, ~ "kooi_region" %in% names(.x) && nrow(.x) > 0)
+  if (!any(usable)) {
+    warning("tally_kooi_candidates: no sheet in the ", what, " workbook (", path,
+            ") carries a kooi_region column with rows; returning no candidates.")
+    return(tibble::tibble(chr = character(0), kooi_region = character(0)))
+  }
+
+  tabs <- tabs[usable] %>% map(dplyr::filter, !is.na(kooi_region))
+  tabs[map_lgl(tabs, ~ (nrow(.x) > 0))] %>%
+    dplyr::bind_rows(.id = "chr")
 }
 
 #' Perform retrieve cell stats operation

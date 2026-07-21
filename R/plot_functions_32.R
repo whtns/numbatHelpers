@@ -1,5 +1,23 @@
 # Plot Functions (131)
 
+# Sort a diffex table so rows on canonical chromosomes come first, leaving
+# patch/alt-contig annotations (HG405_PATCH, HSCHR*, GL*, KI*, ...) last. Used
+# before dedupe so the row we retain for a symbol is its real assembly
+# assignment rather than a patch duplicate carrying identical statistics.
+.canonical_chr_first <- function(d) {
+  if (!is.data.frame(d) || !"chr" %in% names(d)) return(d)
+  canonical <- c(as.character(1:22), "X", "Y", "MT")
+  dplyr::arrange(d, !as.character(d$chr) %in% canonical)
+}
+
+# The curated Kooi candidate list is joined on `symbol` alone, so any duplicated
+# row there fans the diffex table out many-to-many (TDP2 is listed twice as 6p).
+# Read it once, de-duplicated.
+.read_kooi_candidates <- function(path = "data/kooi_candidates.csv") {
+  readr::read_csv(path, show_col_types = FALSE) %>%
+    dplyr::distinct(symbol, kooi_region, .keep_all = TRUE)
+}
+
 #' Perform differential expression analysis
 #'
 #' @param cluster_diffex_clones Cluster information
@@ -28,7 +46,7 @@ tabulate_diffex_clones <- function(cluster_diffex_clones,
     return(invisible(NULL))
   }
 
-  kooi_candidates <- read_csv("data/kooi_candidates.csv")
+  kooi_candidates <- .read_kooi_candidates()
 
   cc_genes <- Seurat::cc.genes %>%
     tibble::enframe("phase_of_gene", "symbol") %>%
@@ -226,7 +244,7 @@ make_volcano_diffex_clones <- function(cluster_diffex_clones,
     return(invisible(NULL))
   }
 
-  kooi_candidates <- read_csv("data/kooi_candidates.csv")
+  kooi_candidates <- .read_kooi_candidates()
 
   cc_genes <- Seurat::cc.genes %>%
     tibble::enframe("phase_of_gene", "symbol") %>%
@@ -266,15 +284,24 @@ make_volcano_diffex_clones <- function(cluster_diffex_clones,
     map(dplyr::left_join, kooi_candidates, by = "symbol") %>%
     identity()
 
+  # The gene annotation attaches some symbols to a patch/alt contig as well as to
+  # their real chromosome, with identical statistics -- e.g. ATMIN appears on both
+  # chr16 and HG405_PATCH. Deduping on (clone_comparison, cluster, chr, symbol)
+  # kept BOTH rows because `chr` differs, and volcano_plot_clone_clusters() then
+  # calls column_to_rownames("symbol") per group -> "duplicate 'row.names' are not
+  # allowed". Sort canonical chromosomes first so the row we keep is the real
+  # assembly one, then dedupe on exactly the key the rownames use (no `chr`).
   cluster_diffex_clones <-
     cluster_diffex_clones %>%
     # map2(total_diffex_clones, annotate_cluster_membership, "is_total_clone_diffex") %>%
-    map(dplyr::distinct, clone_comparison, cluster, chr, symbol, .keep_all = TRUE)
+    map(.canonical_chr_first) %>%
+    map(dplyr::distinct, clone_comparison, cluster, symbol, .keep_all = TRUE)
 
   total_diffex_clones <-
     total_diffex_clones %>%
     # map2(cluster_diffex_clones, annotate_cluster_membership, "is_cluster_clone_diffex") %>%
-    map(dplyr::distinct, clone_comparison, chr, symbol, .keep_all = TRUE)
+    map(.canonical_chr_first) %>%
+    map(dplyr::distinct, clone_comparison, symbol, .keep_all = TRUE)
 
   # cluster ------------------------------
   clone_cluster_comparison_volcanos <- imap(cluster_diffex_clones, volcano_plot_clone_clusters)
