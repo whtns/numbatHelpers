@@ -64,7 +64,12 @@ annotate_percent_segment_diffex <- function(diffex) {
 
   total_diffex_clones <-
     total_diffex_clones %>%
-    set_names(sample_ids) %>%
+    # Name from THIS list's own paths, not `sample_ids` (which is derived from
+    # cluster_diffex_clones): the cluster and total lists can differ in length --
+    # e.g. cis, where every sample has per-cluster diffex but the straight/total
+    # cis list is empty -- and cross-naming then dies with "size of `nm` must be
+    # compatible with the size of `x`".
+    set_names(str_extract(., "SR[RX][0-9]+")) %>%
     map(bind_rows, .id = "clone_comparison") %>%
     purrr::keep(~ ncol(.x) > 0) %>%
   	purrr::compact() |>
@@ -232,7 +237,12 @@ make_volcano_diffex_clones <- function(cluster_diffex_clones,
   # total ------------------------------
   total_diffex_clones <-
     total_diffex_clones %>%
-    set_names(sample_ids) %>%
+    # Name from THIS list's own paths, not `sample_ids` (which is derived from
+    # cluster_diffex_clones): the cluster and total lists can differ in length --
+    # e.g. cis, where every sample has per-cluster diffex but the straight/total
+    # cis list is empty -- and cross-naming then dies with "size of `nm` must be
+    # compatible with the size of `x`".
+    set_names(str_extract(., "SR[RX][0-9]+")) %>%
     map(bind_rows, .id = "clone_comparison") %>%
     purrr::discard(~ nrow(.x) < 1) %>%
     map(dplyr::left_join, cc_genes, by = "symbol") %>%
