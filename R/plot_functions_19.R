@@ -666,6 +666,111 @@ run_hypoxia_clustering = FALSE, cluster_resolutions = seq(0.2, 1, by = 0.2), ass
   return(new_filepath)
 }
 
+#' Clone palette for a bar variable that relabels the clones
+#'
+#' Returns a named colour vector (names = levels of `bar_var`) taken from the
+#' `clone` factor's own `scales::hue_pal()` colours -- the palette
+#' `Seurat::DimPlot()` and the heatmap's clone annotation both use -- so a bar
+#' panel grouped by a relabelled clone column reads in the same colours as the
+#' rest of the collage. Returns `NULL` unless `bar_var` and `clone` are in strict
+#' 1:1 correspondence, in which case there is no clone colour to inherit.
+#'
+#' @param meta A Seurat `@meta.data` carrying `clone` and `bar_var` columns.
+#' @param bar_var Name of the bar-grouping column.
+#' @return Named character vector of colours, or `NULL`.
+#' @keywords internal
+.bar_fill_from_clone <- function(meta, bar_var) {
+  if (is.null(bar_var) || !all(c("clone", bar_var) %in% colnames(meta))) return(NULL)
+  if (identical(bar_var, "clone")) return(NULL)  # already the clone palette
+
+  bars   <- as.character(meta[[bar_var]])
+  clones <- as.character(meta$clone)
+  ok     <- !is.na(bars) & !is.na(clones)
+  if (!any(ok)) return(NULL)
+  pairs <- unique(data.frame(bar = bars[ok], clone = clones[ok],
+                             stringsAsFactors = FALSE))
+  # strict 1:1 -- no bar level spanning two clones, no clone spanning two bars
+  if (anyDuplicated(pairs$bar) || anyDuplicated(pairs$clone)) return(NULL)
+
+  clone_lvls <- levels(factor(meta$clone))
+  clone_cols <- stats::setNames(scales::hue_pal()(length(clone_lvls)), clone_lvls)
+  cols <- clone_cols[pairs$clone]
+  if (anyNA(cols)) return(NULL)
+  stats::setNames(unname(cols), pairs$bar)
+}
+
+#' Stash the persisted resolution sweep under `clustree_res.*`
+#'
+#' Copies every `<assay>_snn_res.<r>` column to `clustree_res.<r>`. The collage
+#' builders overwrite `SCT_snn_res.0.6` with whichever resolution they are
+#' plotting, so a clustree built from the `<assay>_snn_res.*` columns after that
+#' point mislabels its 0.6 level. Call this BEFORE the overwrite and
+#' [.build_clustree_panel()] will read the untouched copies instead.
+#'
+#' @param seu A Seurat object.
+#' @param assay Assay whose `<assay>_snn_res.*` columns hold the sweep.
+#' @return `seu`, with the `clustree_res.*` columns added.
+#' @keywords internal
+.stash_clustree_sweep <- function(seu, assay = "SCT") {
+  prefix <- paste0(assay, "_snn_res.")
+  cols <- colnames(seu@meta.data)[startsWith(colnames(seu@meta.data), prefix)]
+  for (cl in cols) {
+    seu@meta.data[[paste0("clustree_res.", substring(cl, nchar(prefix) + 1L))]] <-
+      seu@meta.data[[cl]]
+  }
+  seu
+}
+
+#' Clustree panel for a collage
+#'
+#' Builds a [clustree::clustree()] plot of the clustering-resolution sweep stored
+#' in the object's metadata, so a collage pinned to one resolution still shows how
+#' its clusters split and merge across the sweep.
+#'
+#' Prefers `clustree_res.*` columns when a caller has stashed the sweep there.
+#' The collage builders overwrite `SCT_snn_res.0.6` with whichever resolution is
+#' being plotted (that is the column [dummy_cluster_order()] and `group.by` key
+#' on), so the `<assay>_snn_res.*` columns no longer describe a monotone sweep and
+#' a tree built from them would mislabel its levels.
+#'
+#' @param seu A Seurat object.
+#' @param assay Assay whose `<assay>_snn_res.*` columns are the fallback sweep.
+#' @return A ggplot, or `NULL` when fewer than two resolution columns exist or
+#'   clustree fails -- the collage then simply omits the band.
+#' @keywords internal
+.build_clustree_panel <- function(seu, assay = "SCT") {
+  md <- seu@meta.data
+  prefix <- if (any(startsWith(colnames(md), "clustree_res."))) {
+    "clustree_res."
+  } else {
+    paste0(assay, "_snn_res.")
+  }
+  cols <- colnames(md)[startsWith(colnames(md), prefix)]
+  if (length(cols) < 2L) return(NULL)
+  tryCatch({
+    sweep_df <- md[, cols, drop = FALSE]
+    for (cl in cols) sweep_df[[cl]] <- factor(as.character(sweep_df[[cl]]))
+    clustree::clustree(sweep_df, prefix = prefix) +
+      labs(title = "clustree")
+  }, error = function(e) {
+    message("!! clustree panel failed: ", conditionMessage(e))
+    NULL
+  })
+}
+
+# Collage-panel controls added for issues #34/#35/#37/#38:
+#   column_label_rot - angle (deg) for the heatmap column-split labels, now drawn
+#                      diagonally ON TOP of the heatmap (#35); NULL keeps
+#                      ComplexHeatmap's default horizontal split titles.
+#   segment_tree     - add a second phylogeny panel with numbat's RAW segment
+#                      labels beside the SCNA-simplified clone tree (#37). Only
+#                      drawn when nb_paths AND clone_simplifications are supplied
+#                      (with NULL simplifications the clone tree already IS the
+#                      segment tree, so the panel would duplicate it).
+#   clustree         - add a clustree panel of the resolution sweep (#38); reads
+#                      clustree_res.* if present, else <assay>_snn_res.*.
+# The stacked-bar fill now inherits the clone palette when bar_var relabels the
+# clones, so its colours match the UMAP / heatmap clone annotation (#34).
 plot_seu_marker_heatmap <- function(seu_path = NULL, cluster_order = NULL,
 nb_paths = NULL, clone_simplifications = NULL, group.by = "SCT_snn_res.0.6",
 assay = "SCT", label = "_filtered_", height = 10, width = 18,
@@ -673,7 +778,8 @@ equalize_scna_clones = FALSE, display_cells = NULL, bar_var = "clone",
 phase_levels = c("pm", "g1", "g1_s", "s", "s_g2", "g2", "g2_m", "hsp", "hypoxia", "other", "s_star"),
 kept_phases = NULL, tmp_plot_path = FALSE, hypoxia_expr = NULL,
 run_hypoxia_clustering = FALSE, cluster_resolutions = seq(0.2, 1, by = 0.2),
-bar_signif = FALSE, bar_signif_min_cells = 20) {
+bar_signif = FALSE, bar_signif_min_cells = 20,
+column_label_rot = 45, segment_tree = TRUE, clustree = TRUE) {
   kept_phases <- kept_phases %||% phase_levels
 
   if (is.na(seu_path)) return(NA_character_)
@@ -882,6 +988,7 @@ bar_signif = FALSE, bar_signif_min_cells = 20) {
       column_split = sort(seu@meta.data$clusters),
       row_split = rev(heatmap_features$Cluster),
       row_title_rot = 0,
+      column_split_label_rot = column_label_rot,
       # row_split = sort(seu@meta.data$clusters)
     )
   ) +
@@ -955,9 +1062,21 @@ bar_signif = FALSE, bar_signif_min_cells = 20) {
   } else {
     "clone"
   }
+
+  # When bar_var is a 1:1 RELABELLING of `clone` -- which is exactly what the
+  # two-clone collages do, where `scna_status` renames clone N to "1q+ (clone N)"
+  # and clone M to "preceding (clone M)" -- give the bars the clone's own colour.
+  # Otherwise ggplot re-derives hue_pal() from bar_var's level order, and since
+  # those levels are ordered acquiring-clone-first (not by clone id, the order
+  # `clone` and hence DimPlot / the heatmap annotation use), the two clones come
+  # out with each other's colours. Only a strict 1:1 mapping qualifies; anything
+  # else keeps the default scale.
+  bar_fill_colors <- .bar_fill_from_clone(seu@meta.data, bar_var_use)
+
   clone_distribution_plot <-
     plot_distribution_of_clones_across_clusters(seu, tumor_id, var_x = bar_var_use, var_y = "clusters", reverse_fill = TRUE,
-                                                signif = bar_signif, signif_min_cells = bar_signif_min_cells)
+                                                signif = bar_signif, signif_min_cells = bar_signif_min_cells,
+                                                fill_colors = bar_fill_colors)
 
   # Persist the per-cluster enrichment table next to the collage: the stars on
   # the panel are a summary, and the q-values / cell counts behind them should
@@ -977,51 +1096,74 @@ bar_signif = FALSE, bar_signif_min_cells = 20) {
     wrap_plots(ncol = 1)
 
   clone_tree_plot <- if (!is.null(nb_path)) {
-    plot_clone_tree(seu, tumor_id, nb_path, clone_simplifications, sample_id = sample_id, legend = FALSE, horizontal = FALSE)
+    tryCatch(
+      plot_clone_tree(seu, tumor_id, nb_path, clone_simplifications, sample_id = sample_id, legend = FALSE, horizontal = FALSE),
+      error = function(e) {
+        message("!! clone tree panel failed for ", tumor_id, ": ",
+                conditionMessage(e))
+        NULL
+      })
   } else {
     NULL
   }
 
-  # Only use the clone-tree layout if we actually got a plot back; otherwise fall
-  # through to the no-tree layout rather than feeding a NULL panel to wrap_plots().
-  if (!is.null(clone_tree_plot)) {
-    collage_plots <- list(
-    	"A" = seu_heatmap,
-    	"B" = facet_cell_cycle_plot,
-    	"C" = umap_plots,
-    	"D" = clone_distribution_plot,
-    	"E" = clone_tree_plot)
-
-    layout <- "
-            AAAAAAAAAAAEEEECCCC
-            AAAAAAAAAAABBBBCCCC
-            AAAAAAAAAAABBBBDDDD
-            AAAAAAAAAAABBBBDDDD
-            AAAAAAAAAAABBBBDDDD
-            "
-
-    wrap_plots(collage_plots) +
-      # plot_layout(widths = c(16, 4)) +
-      plot_layout(design = layout) +
-      plot_annotation(tag_levels = "A") +
-      NULL
+  # Segment tree: the same phylogeny drawn with numbat's RAW segment labels
+  # (clone_simplifications = NULL) instead of the curated SCNA names, so the
+  # collage shows which segments actually define each clone rather than only the
+  # simplified call. Same panel the *_segment_tree.pdf targets emit; it used to be
+  # in the collage and is restored here. Only meaningful when there IS a tree AND
+  # simplifications were applied to it -- with clone_simplifications = NULL the
+  # clone tree already carries the raw segment labels, so a second panel would be
+  # an exact duplicate.
+  segment_tree_plot <- if (isTRUE(segment_tree) && !is.null(nb_path) &&
+                           !is.null(clone_simplifications)) {
+    tryCatch(
+      plot_clone_tree(seu, tumor_id, nb_path, clone_simplifications = NULL,
+                      sample_id = sample_id, legend = FALSE, horizontal = FALSE) +
+        labs(subtitle = "segments"),
+      error = function(e) {
+        message("!! segment tree panel failed for ", tumor_id, ": ",
+                conditionMessage(e))
+        NULL
+      })
   } else {
-    layout <- "
-            AAAAAAAAAABBBBCCCC
-            AAAAAAAAAABBBBCCCC
-            AAAAAAAAAABBBBDDDD
-            AAAAAAAAAABBBBDDDD
-            AAAAAAAAAABBBBDDDD
-    "
-
-    collage_plots <- list(seu_heatmap, facet_cell_cycle_plot, centroid_plot, clone_distribution_plot)
-
-    wrap_plots(collage_plots) +
-      # plot_layout(widths = c(16, 4)) +
-      plot_layout(design = layout) +
-      plot_annotation(tag_levels = "A") +
-      NULL
+    NULL
   }
+
+  clustree_plot <- if (isTRUE(clustree)) .build_clustree_panel(seu, assay) else NULL
+
+  # Assemble the design row-band by row-band so an absent panel costs its band
+  # rather than needing a hand-written layout per combination. Left 11 columns are
+  # always the heatmap; the right 8 split into two 4-wide sub-columns.
+  #   E clone tree | F segment tree   (2 rows, omitted when there is no tree)
+  #   G clustree                      (2 rows, omitted when unavailable)
+  #   B phase facets | C umaps        (2 rows)
+  #   B phase facets | D bars         (3 rows)
+  A <- strrep("A", 11)
+  bands <- character(0)
+  if (!is.null(clone_tree_plot)) {
+    right <- if (!is.null(segment_tree_plot)) "EEEEFFFF" else "EEEEEEEE"
+    bands <- c(bands, rep(paste0(A, right), 2))
+  }
+  if (!is.null(clustree_plot)) bands <- c(bands, rep(paste0(A, "GGGGGGGG"), 2))
+  bands <- c(bands, rep(paste0(A, "BBBBCCCC"), 2), rep(paste0(A, "BBBBDDDD"), 3))
+  layout <- paste(bands, collapse = "\n")
+
+  collage_plots <- list(
+    "A" = seu_heatmap,
+    "B" = facet_cell_cycle_plot,
+    "C" = umap_plots,
+    "D" = clone_distribution_plot,
+    "E" = clone_tree_plot,
+    "F" = segment_tree_plot,
+    "G" = clustree_plot
+  )
+  collage_plots <- collage_plots[!vapply(collage_plots, is.null, logical(1))]
+
+  collage <- wrap_plots(collage_plots) +
+    plot_layout(design = layout) +
+    plot_annotation(tag_levels = "A") +
+    NULL
 
   file_slug <- str_remove(fs::path_file(seu_path), "_filtered_seu.*")
 
@@ -1032,7 +1174,11 @@ bar_signif = FALSE, bar_signif_min_cells = 20) {
     tempfile(tmpdir = "tmp", fileext = ".pdf")
   }
 
-  ggsave(plot_path, height = height, width = width)
+  # Grow the page with the number of row bands instead of squeezing the extra
+  # panels into the old 5-band page: every panel then keeps the physical size it
+  # had before the tree/clustree bands were added. `height` is the 5-band height.
+  ggsave(plot_path, plot = collage,
+         height = height * length(bands) / 5, width = width)
 }
 
 

@@ -100,8 +100,14 @@
 #' @param signif_min_cells Bars with fewer cells than this are not tested and are
 #'   labelled `(n<min)`, so an absent star is never mistaken for a
 #'   non-significant one (default 20). Ignored when `signif = FALSE`.
+#' @param fill_colors Named colour vector for the `var_x` fill of the clone panel
+#'   (names = `var_x` levels). Supply this when `var_x` is a relabelling of the
+#'   clones so the bars carry the SAME colours as the UMAP / heatmap clone
+#'   annotation; without it ggplot re-derives the hue palette from `var_x`'s own
+#'   level order, which flips the colours whenever that order differs from the
+#'   clone factor's. `NULL` (default) keeps the default discrete scale.
 #' @export
-plot_distribution_of_clones_across_clusters <- function(seu, seu_name, var_x = "scna", var_y = "SCT_snn_res.0.6", plot_type = c("both", "clone", "cluster"), avg_line = NULL, signif = FALSE, signif_min_cells = 20, integrated = FALSE, reverse_fill = FALSE) {
+plot_distribution_of_clones_across_clusters <- function(seu, seu_name, var_x = "scna", var_y = "SCT_snn_res.0.6", plot_type = c("both", "clone", "cluster"), avg_line = NULL, signif = FALSE, signif_min_cells = 20, integrated = FALSE, reverse_fill = FALSE, fill_colors = NULL) {
   plot_type <- match.arg(plot_type)
 
   # reverse_fill flips the stacking direction of the position="fill" bars so the
@@ -174,6 +180,14 @@ plot_distribution_of_clones_across_clusters <- function(seu, seu_name, var_x = "
       scale_x_discrete(limits = rev) +
       coord_flip() +
       theme_minimal()
+  }
+
+  # Pin the var_x fill to the caller's palette. Only clone_plot fills by var_x;
+  # cluster_plot fills by var_y (the clusters), whose colours already agree with
+  # the phase-scatter / UMAP panels.
+  if (!is.null(fill_colors)) {
+    clone_plot <- clone_plot +
+      ggplot2::scale_fill_manual(values = fill_colors, drop = FALSE)
   }
 
   if (!is.null(avg_line)) {

@@ -114,13 +114,22 @@ plot_cc_space_plot <- function(seu_path = "output/seurat/SRX11133594_filtered_se
 #' @param col_arrangement Color specification
 #' @param mm_col_dend Color specification
 #' @param embedding Character string (default: "pca")
+#' @param column_split_label_rot Angle (degrees) at which to draw the
+#'   `column_split` level names above the heatmap, e.g. `45`. ComplexHeatmap's
+#'   own column titles only rotate to 0/90, and at 0 the titles of narrow blocks
+#'   collide -- the collage heatmaps routinely split into 8+ clusters across the
+#'   panel, which renders as one unreadable run of overlapping text. Setting this
+#'   suppresses the built-in titles and draws them as a rotated `anno_block`
+#'   above the group bar instead. `NULL` (default) keeps ComplexHeatmap's titles.
+#' @param column_split_label_gp `grid::gpar()` for those labels.
 #' @param ... Additional arguments passed to other functions
 #' @return Function result
 #' @export
 seu_complex_heatmap <- function(seu, features = NULL, group.by = "ident", cells = NULL,
                                 layer = "scale.data", assay = NULL, group.bar.height = 0.01,
                                 column_split = NULL, col_arrangement = "ward.D2", mm_col_dend = 30,
-                                embedding = "pca", ...) {
+                                embedding = "pca", column_split_label_rot = NULL,
+                                column_split_label_gp = grid::gpar(fontsize = 9), ...) {
   
   
   if (length(GetAssayData(seu, layer = "scale.data")) == 0) {
@@ -220,15 +229,48 @@ seu_complex_heatmap <- function(seu, features = NULL, group.by = "ident", cells 
     df = groups.use,
     height = grid::unit(group.bar.height, "points"), col = ha_cols
   )
-  hm <- ComplexHeatmap::Heatmap(t(data),
-    name = "log expression",
-    top_annotation = column_ha, cluster_columns = cluster_columns,
-    show_column_names = FALSE, column_dend_height = grid::unit(
-      mm_col_dend,
-      "mm"
-    ), column_split = column_split,
-    ...
+
+  hm_args <- c(
+    list(
+      t(data),
+      name = "log expression",
+      top_annotation = column_ha,
+      cluster_columns = cluster_columns,
+      show_column_names = FALSE,
+      column_dend_height = grid::unit(mm_col_dend, "mm"),
+      column_split = column_split
+    ),
+    list(...)
   )
+
+  # Rotated block labels stacked ABOVE the group bar (see column_split_label_rot).
+  # The block's height has to cover the vertical reach of the longest label at
+  # that angle, or ComplexHeatmap clips it.
+  if (!is.null(column_split_label_rot) && !is.null(column_split)) {
+    rot    <- column_split_label_rot
+    lab_gp <- column_split_label_gp
+    lvls   <- as.character(unique(column_split))
+    label_ha <- ComplexHeatmap::HeatmapAnnotation(
+      column_split_label = ComplexHeatmap::anno_block(
+        panel_fun = function(index, nm) {
+          grid::grid.text(paste(nm, collapse = " "),
+                          x = grid::unit(0.5, "npc"), y = grid::unit(0, "npc"),
+                          rot = rot, just = c("left", "centre"), gp = lab_gp)
+        },
+        which  = "column",
+        height = ComplexHeatmap::max_text_width(lvls, gp = lab_gp) *
+          abs(sin(rot * pi / 180)) + grid::unit(3, "mm")
+      ),
+      show_annotation_name = FALSE
+    )
+    hm_args$top_annotation <- c(label_ha, column_ha)
+    # Suppress ComplexHeatmap's own split titles -- we just drew them. `[<-` with
+    # list(NULL) sets the element to NULL; `$<- NULL` would delete the argument
+    # and fall back to the split-derived titles.
+    if (!"column_title" %in% names(hm_args)) hm_args["column_title"] <- list(NULL)
+  }
+
+  hm <- do.call(ComplexHeatmap::Heatmap, hm_args)
   return(hm)
 }
 

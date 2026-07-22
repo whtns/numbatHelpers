@@ -134,6 +134,10 @@ plot_hypoxia_low_res_collages <- function(low_seu_path,
     })
   }
 
+  # Keep an untouched copy of the persisted sweep for the collage's clustree
+  # panel: SCT_snn_res.0.6 is overwritten per resolution below.
+  seu <- .stash_clustree_sweep(seu, assay)
+
   purrr::map_chr(resolutions, function(res) {
     tryCatch({
       col <- glue::glue("{assay}_snn_res.{res}")

@@ -172,9 +172,22 @@ plot_scna_two_clone_res_collages <- function(seu_path,
                                  k.param = k_param,
                                  graph.name = paste0(assay, c("_nn", "_snn")),
                                  verbose = FALSE)
+    # Cluster the WHOLE sweep here, not one resolution at a time inside the map:
+    # the clustree panel needs every resolution to have been clustered on this
+    # same two-clone graph. The persisted <assay>_snn_res.* columns carried over
+    # from the parent object describe the full population, so a tree built from
+    # them would not describe these cells. Stashed under clustree_res.* because
+    # each collage below overwrites SCT_snn_res.0.6 with its own resolution.
+    for (r in resolutions) {
+      seu <- Seurat::FindClusters(seu, graph.name = snn_name, resolution = r,
+                                  verbose = FALSE)
+      seu@meta.data[[glue::glue("{assay}_snn_res.{r}")]] <- seu$seurat_clusters
+      seu@meta.data[[glue::glue("clustree_res.{r}")]] <- seu$seurat_clusters
+    }
     message(sample_id, " ", scna_of_interest, ": recomputed PCA on ", ncol(seu),
             " two-clone cells (npcs ", npcs, ", k ", k_param,
-            "); clustering all resolutions on it")
+            "); clustered resolutions ", paste(resolutions, collapse = " "),
+            " on it")
     TRUE
   }, error = function(e) {
     message("!! ", sample_id, " ", scna_of_interest, ": PCA recompute failed (",
@@ -182,15 +195,13 @@ plot_scna_two_clone_res_collages <- function(seu_path,
     FALSE
   })
 
+  if (!isTRUE(recomputed)) seu <- .stash_clustree_sweep(seu, assay)
+
   purrr::map_chr(resolutions, function(res) {
     tryCatch({
       col <- glue::glue("{assay}_snn_res.{res}")
       s   <- seu
-      if (isTRUE(recomputed)) {
-        s <- Seurat::FindClusters(s, graph.name = snn_name, resolution = res,
-                                  verbose = FALSE)
-        s@meta.data[[col]] <- s$seurat_clusters
-      } else if (!col %in% colnames(s@meta.data)) {
+      if (!col %in% colnames(s@meta.data)) {
         message(sample_id, " ", scna_of_interest, ": no ", col,
                 " and no usable PCA -> skip res ", res)
         return(NA_character_)
