@@ -56,6 +56,14 @@
 #'   expensive panel.
 #' @param clone_simplifications Passed through to [plot_seu_marker_heatmap()].
 #' @param assay Assay whose `<assay>_snn_res.<r>` columns are used (default "SCT").
+#' @param bar_signif Mark each cluster bar with the significance of its
+#'   SCNA-status composition versus all other cells (Fisher's exact, BH-adjusted
+#'   within the panel). Default `TRUE` here -- "is this cluster enriched for the
+#'   clone that acquired the SCNA" is the question these collages exist to answer.
+#'   The per-cluster q-values are also written to
+#'   `results/<basename>_<scna>_res<r>_bar_enrichment.csv`.
+#' @param bar_signif_min_cells Clusters smaller than this are not tested; their
+#'   axis label reads `(n<min)` rather than silently going unmarked (default 20).
 #' @return Character vector of PDF paths written (`NA_character_` per failed or
 #'   skipped resolution). Never errors -- best-effort, like the sibling collage
 #'   builders.
@@ -66,7 +74,9 @@ plot_scna_two_clone_res_collages <- function(seu_path,
                                              resolutions = seq(0.2, 0.8, by = 0.2),
                                              nb_paths = NULL,
                                              clone_simplifications = NULL,
-                                             assay = "SCT") {
+                                             assay = "SCT",
+                                             bar_signif = TRUE,
+                                             bar_signif_min_cells = 20) {
   if (is.null(seu_path) || length(seu_path) == 0 ||
       is.na(seu_path) || !file.exists(seu_path)) {
     return(NA_character_)
@@ -200,6 +210,7 @@ plot_scna_two_clone_res_collages <- function(seu_path,
         tmp, cluster_order = NULL, nb_paths = nb_paths,
         clone_simplifications = clone_simplifications,
         bar_var = "scna_status",
+        bar_signif = bar_signif, bar_signif_min_cells = bar_signif_min_cells,
         label = glue::glue("_{scna_of_interest}_res{res}_"))
 
       expected <- glue::glue(

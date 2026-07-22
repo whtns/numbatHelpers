@@ -672,7 +672,8 @@ assay = "SCT", label = "_filtered_", height = 10, width = 18,
 equalize_scna_clones = FALSE, display_cells = NULL, bar_var = "clone",
 phase_levels = c("pm", "g1", "g1_s", "s", "s_g2", "g2", "g2_m", "hsp", "hypoxia", "other", "s_star"),
 kept_phases = NULL, tmp_plot_path = FALSE, hypoxia_expr = NULL,
-run_hypoxia_clustering = FALSE, cluster_resolutions = seq(0.2, 1, by = 0.2)) {
+run_hypoxia_clustering = FALSE, cluster_resolutions = seq(0.2, 1, by = 0.2),
+bar_signif = FALSE, bar_signif_min_cells = 20) {
   kept_phases <- kept_phases %||% phase_levels
 
   if (is.na(seu_path)) return(NA_character_)
@@ -955,7 +956,21 @@ run_hypoxia_clustering = FALSE, cluster_resolutions = seq(0.2, 1, by = 0.2)) {
     "clone"
   }
   clone_distribution_plot <-
-    plot_distribution_of_clones_across_clusters(seu, tumor_id, var_x = bar_var_use, var_y = "clusters", reverse_fill = TRUE)
+    plot_distribution_of_clones_across_clusters(seu, tumor_id, var_x = bar_var_use, var_y = "clusters", reverse_fill = TRUE,
+                                                signif = bar_signif, signif_min_cells = bar_signif_min_cells)
+
+  # Persist the per-cluster enrichment table next to the collage: the stars on
+  # the panel are a summary, and the q-values / cell counts behind them should
+  # not live only inside a PDF. Written from the same `label` the PDF uses, so
+  # the two stay paired.
+  if (isTRUE(bar_signif)) {
+    bar_stats <- attr(clone_distribution_plot, "enrichment_stats")
+    if (!is.null(bar_stats) && nrow(bar_stats) > 0) {
+      stats_csv <- glue::glue("results/{basename(seu_path)}_{label}bar_enrichment.csv") %>%
+        stringr::str_replace_all("_{2,}", "_")
+      readr::write_csv(dplyr::mutate(bar_stats, sample_id = tumor_id, .before = 1), stats_csv)
+    }
+  }
 
   umap_plots <- DimPlot(seu, group.by = c("clone", "clusters"), combine = FALSE) %>%
     # map(~(.x + theme(legend.position = "bottom"))) %>%
