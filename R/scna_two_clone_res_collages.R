@@ -217,21 +217,24 @@ plot_scna_two_clone_res_collages <- function(seu_path,
       tmp <- file.path(tempdir(), basename(seu_path))
       saveRDS(s, tmp)
 
-      plot_seu_marker_heatmap(
+      # Use the path plot_seu_marker_heatmap actually wrote rather than
+      # reconstructing it: for a filtered_seu source basename its internal
+      # file_slug strips "_filtered_seu.*", so a reconstructed name would not
+      # match (and the collage would be silently dropped from collection).
+      out <- plot_seu_marker_heatmap(
         tmp, cluster_order = NULL, nb_paths = nb_paths,
         clone_simplifications = clone_simplifications,
         bar_var = "scna_status",
         bar_signif = bar_signif, bar_signif_min_cells = bar_signif_min_cells,
         label = glue::glue("_{scna_of_interest}_res{res}_"))
 
-      expected <- glue::glue(
-        "results/{basename(seu_path)}__{scna_of_interest}_res{res}_heatmap_phase_scatter_patchwork.pdf")
-      if (!file.exists(expected)) {
-        message("!! two-clone scna collage produced NO pdf at ", expected)
+      if (length(out) != 1 || is.na(out) || !file.exists(out)) {
+        message("!! two-clone scna collage produced NO pdf (got '",
+                paste(out, collapse = ", "), "')")
         return(NA_character_)
       }
-      message("wrote two-clone scna collage ", expected)
-      as.character(expected)
+      message("wrote two-clone scna collage ", out)
+      as.character(out)
     }, error = function(e) {
       message("!! two-clone scna collage FAILED for ", sample_id, " ",
               scna_of_interest, " res ", res, ": ", conditionMessage(e))

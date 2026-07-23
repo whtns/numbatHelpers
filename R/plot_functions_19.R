@@ -1179,6 +1179,13 @@ column_label_rot = 45, segment_tree = TRUE, clustree = TRUE) {
   # had before the tree/clustree bands were added. `height` is the 5-band height.
   ggsave(plot_path, plot = collage,
          height = height * length(bands) / 5, width = width)
+
+  # Return the ACTUAL path written, not something the caller re-derives. file_slug
+  # strips "_filtered_seu.*", so callers cannot reconstruct the name from the
+  # source basename when it contains "_filtered_seu" (e.g. the two-clone collages
+  # on filtered_seus) -- reconstructing gives "<SRX>_filtered_seu.rds__..." while
+  # this writes "<SRX>__...". Handing back plot_path removes that guesswork.
+  as.character(plot_path)
 }
 
 

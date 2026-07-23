@@ -171,19 +171,20 @@ plot_hypoxia_low_res_collages <- function(low_seu_path,
       tmp <- file.path(tempdir(), basename(low_seu_path))
       saveRDS(s, tmp)
 
+      # Use the path plot_seu_marker_heatmap actually wrote (its internal
+      # file_slug can differ from a reconstructed name; see the two-clone builder).
       out <- plot_seu_marker_heatmap(
         tmp, cluster_order = NULL, nb_paths = nb_paths,
         clone_simplifications = clone_simplifications,
         label = glue::glue("_filtered_res{res}_"))
 
-      expected <- glue::glue(
-        "results/{basename(low_seu_path)}__filtered_res{res}_heatmap_phase_scatter_patchwork.pdf")
-      if (!file.exists(expected)) {
-        message("!! low-hypoxia collage produced NO pdf at ", expected)
+      if (length(out) != 1 || is.na(out) || !file.exists(out)) {
+        message("!! low-hypoxia collage produced NO pdf (got '",
+                paste(out, collapse = ", "), "')")
         return(NA_character_)
       }
-      message("wrote low-hypoxia collage ", expected)
-      as.character(expected)
+      message("wrote low-hypoxia collage ", out)
+      as.character(out)
     }, error = function(e) {
       message("!! low-hypoxia collage FAILED for ", sample_id, " res ", res, ": ",
               conditionMessage(e))
