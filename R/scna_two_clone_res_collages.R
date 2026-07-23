@@ -68,6 +68,38 @@
 #'   skipped resolution). Never errors -- best-effort, like the sibling collage
 #'   builders.
 #' @export
+#' Ensure a Seurat object carries S.Score / G2M.Score
+#'
+#' Adds Tirosh cell-cycle scores via [Seurat::CellCycleScoring()] when they are
+#' absent, scoring on the full-gene assay ("gene"/"RNA") -- the SCT assay has too
+#' few distinct mean-expression values and errors "Insufficient data values to
+#' produce N bins". Restores the original default assay. Falls back to 0/"G1" only
+#' if scoring fails outright. Mirrors the guarded block in
+#' `load_and_save_hypoxia_score()`.
+#'
+#' @param seu A Seurat object.
+#' @return `seu` with `S.Score`, `G2M.Score`, `Phase` present.
+#' @keywords internal
+.ensure_cc_scores <- function(seu) {
+  if (all(c("G2M.Score", "S.Score") %in% colnames(seu@meta.data))) return(seu)
+  score_assay <- intersect(c("gene", "RNA"), Seurat::Assays(seu))
+  orig_assay  <- Seurat::DefaultAssay(seu)
+  tryCatch({
+    if (length(score_assay) > 0) Seurat::DefaultAssay(seu) <- score_assay[1]
+    seu <- Seurat::CellCycleScoring(
+      seu, s.features = Seurat::cc.genes$s.genes,
+      g2m.features = Seurat::cc.genes$g2m.genes, set.ident = FALSE)
+    Seurat::DefaultAssay(seu) <- orig_assay
+    seu
+  }, error = function(e) {
+    message("CellCycleScoring failed (", conditionMessage(e),
+            "); setting CC scores to 0.")
+    seu$S.Score <- 0; seu$G2M.Score <- 0; seu$Phase <- "G1"
+    Seurat::DefaultAssay(seu) <- orig_assay
+    seu
+  })
+}
+
 plot_scna_two_clone_res_collages <- function(seu_path,
                                              scna_of_interest,
                                              large_clone_comparisons,
@@ -133,6 +165,13 @@ plot_scna_two_clone_res_collages <- function(seu_path,
     message(sample_id, ": no clone_opt column -> skip")
     return(NA_character_)
   }
+
+  # Ensure S.Score/G2M.Score exist. The *_filtered_seu.rds objects frequently lack
+  # them (only the hypoxia-split *_hypoxia_low_seu.rds objects carry them, which is
+  # why the low-hypoxia two-clone collages rendered but the filtered ones failed for
+  # every sample except the one that happened to be scored -- FetchData() errors
+  # "'G2M.Score', 'S.Score' not found"). Score on the full-gene assay when missing.
+  seu <- .ensure_cc_scores(seu)
 
   # Attach the SCNA-of-interest status label the stacked-bar panel groups by
   # (bar_var = "scna_status"). Non-retained clones -> NA (they are not displayed).
