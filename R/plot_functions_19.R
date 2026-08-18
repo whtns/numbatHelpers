@@ -738,7 +738,7 @@ run_hypoxia_clustering = FALSE, cluster_resolutions = seq(0.2, 1, by = 0.2), ass
 #' @return A ggplot, or `NULL` when fewer than two resolution columns exist or
 #'   clustree fails -- the collage then simply omits the band.
 #' @keywords internal
-.build_clustree_panel <- function(seu, assay = "SCT") {
+.build_clustree_panel <- function(seu, assay = "SCT", node_colour_col = NULL) {
   md <- seu@meta.data
   prefix <- if (any(startsWith(colnames(md), "clustree_res."))) {
     "clustree_res."
@@ -750,6 +750,32 @@ run_hypoxia_clustering = FALSE, cluster_resolutions = seq(0.2, 1, by = 0.2), ass
   tryCatch({
     sweep_df <- md[, cols, drop = FALSE]
     for (cl in cols) sweep_df[[cl]] <- factor(as.character(sweep_df[[cl]]))
+    # When a per-cell numeric marker column is supplied (e.g. a 0/1 "removed
+    # during hypoxia splitting" flag), colour each clustree node by the MEAN of
+    # that column over the cells in the node -- i.e. the FRACTION of the node's
+    # cells that carry the mark. This is the only sound way to carry a per-cell
+    # property onto the clustree: the hypoxia split's own clusters are defined on
+    # a different object and resolution grid and do not map 1:1 to these nodes, so
+    # there is no "removed cluster" to recolour directly -- only a removed
+    # fraction per node.
+    if (!is.null(node_colour_col) && node_colour_col %in% colnames(md) &&
+        is.numeric(md[[node_colour_col]])) {
+      sweep_df[[node_colour_col]] <- md[[node_colour_col]]
+      return(
+        clustree::clustree(sweep_df, prefix = prefix,
+                           node_colour = node_colour_col,
+                           node_colour_aggr = "mean") +
+          ggplot2::scale_colour_viridis_c(
+            name = "removed\nfraction", limits = c(0, 1)) +
+          # Drop clustree's node-size and edge in_prop legends: with several panels
+          # sharing the collage's top band their legends stack and collide, and the
+          # only mark that matters here is the removed-fraction colour. Node size
+          # (cluster size) and edge alpha (in_prop) stay drawn, just unlabelled.
+          ggplot2::guides(size = "none", edge_alpha = "none",
+                          edge_colour = "none") +
+          labs(title = "clustree · hypoxia-removed fraction")
+      )
+    }
     clustree::clustree(sweep_df, prefix = prefix) +
       labs(title = "clustree")
   }, error = function(e) {
@@ -769,6 +795,10 @@ run_hypoxia_clustering = FALSE, cluster_resolutions = seq(0.2, 1, by = 0.2), ass
 #                      segment tree, so the panel would duplicate it).
 #   clustree         - add a clustree panel of the resolution sweep (#38); reads
 #                      clustree_res.* if present, else <assay>_snn_res.*.
+#   score_annotations- extra CONTINUOUS per-cell metadata columns to draw as
+#                      heatmap column annotations beside G2M.Score / S.Score,
+#                      each in its own colour (score_annotation_hues). Default
+#                      NULL: only the cell-cycle scores, as before.
 # The stacked-bar fill now inherits the clone palette when bar_var relabels the
 # clones, so its colours match the UMAP / heatmap clone annotation (#34).
 plot_seu_marker_heatmap <- function(seu_path = NULL, cluster_order = NULL,
@@ -779,7 +809,16 @@ phase_levels = c("pm", "g1", "g1_s", "s", "s_g2", "g2", "g2_m", "hsp", "hypoxia"
 kept_phases = NULL, tmp_plot_path = FALSE, hypoxia_expr = NULL,
 run_hypoxia_clustering = FALSE, cluster_resolutions = seq(0.2, 1, by = 0.2),
 bar_signif = FALSE, bar_signif_min_cells = 20,
-column_label_rot = 45, segment_tree = TRUE, clustree = TRUE) {
+column_label_rot = 45, segment_tree = TRUE, clustree = TRUE,
+mark_removed_col = NULL,
+score_annotations = NULL,
+# G2M.Score / S.Score are pinned to the two colours hue_pal() gave them when they
+# were the ONLY continuous annotations, so adding score_annotations extends the
+# palette instead of recolouring the cell-cycle rows -- otherwise the annotated
+# collages stop matching their un-annotated twins (the low-hypoxia two-clone set)
+# panel for panel. hypoxia_score / mito_score take colours distinct from both.
+score_annotation_hues = c(G2M.Score = "#F8766D", S.Score = "#00BFC4",
+                          hypoxia_score = "#762A83", mito_score = "#8C510A")) {
   kept_phases <- kept_phases %||% phase_levels
 
   if (is.na(seu_path)) return(NA_character_)
@@ -973,10 +1012,17 @@ column_label_rot = 45, segment_tree = TRUE, clustree = TRUE) {
 
   row_ha <- ComplexHeatmap::rowAnnotation(term = rev(heatmap_features$term))
 
-  cc_groupby <- c("G2M.Score", "S.Score", "clone", "clusters")
+  # Continuous per-cell score columns requested by the caller (score_annotations)
+  # ride alongside the cell-cycle scores as extra column annotations. Kept only
+  # when the column exists and actually varies -- a constant or absent score
+  # would draw a blank band and, absent, would make seu[[group.by]] error.
+  score_annotations <- score_annotations[
+    score_annotations %in% colnames(seu@meta.data)]
+
+  cc_groupby <- c("G2M.Score", "S.Score", score_annotations, "clone", "clusters")
   cc_groupby <- cc_groupby[sapply(cc_groupby, function(col) {
     vals <- seu@meta.data[[col]]
-    is.null(vals) || length(unique(vals[!is.na(vals)])) > 1L
+    !is.null(vals) && length(unique(vals[!is.na(vals)])) > 1L
   })]
 
   seu_heatmap <- ggplotify::as.ggplot(
@@ -989,6 +1035,7 @@ column_label_rot = 45, segment_tree = TRUE, clustree = TRUE) {
       row_split = rev(heatmap_features$Cluster),
       row_title_rot = 0,
       column_split_label_rot = column_label_rot,
+      numeric_col_hues = score_annotation_hues,
       # row_split = sort(seu@meta.data$clusters)
     )
   ) +
@@ -1130,22 +1177,49 @@ column_label_rot = 45, segment_tree = TRUE, clustree = TRUE) {
     NULL
   }
 
-  clustree_plot <- if (isTRUE(clustree)) .build_clustree_panel(seu, assay) else NULL
+  clustree_plot <- if (isTRUE(clustree)) {
+    .build_clustree_panel(seu, assay, node_colour_col = mark_removed_col)
+  } else NULL
+
+  # When a per-cell removal marker is supplied, add a UMAP tinted by it so the
+  # cells removed during hypoxia splitting are visible in embedding space too, not
+  # only aggregated onto the clustree nodes. FeaturePlot of the 0/1 column shows
+  # each removed cell directly.
+  removed_umap_plot <- if (!is.null(mark_removed_col) &&
+                           mark_removed_col %in% colnames(seu@meta.data) &&
+                           is.numeric(seu@meta.data[[mark_removed_col]]) &&
+                           "umap" %in% names(seu@reductions)) {
+    tryCatch(
+      Seurat::FeaturePlot(seu, features = mark_removed_col) +
+        ggplot2::scale_colour_viridis_c(name = "removed", limits = c(0, 1)) +
+        labs(title = "hypoxia-removed cells"),
+      error = function(e) {
+        message("!! removed-umap panel failed for ", tumor_id, ": ",
+                conditionMessage(e))
+        NULL
+      })
+  } else NULL
 
   # Assemble the design row-band by row-band so an absent panel costs its band
   # rather than needing a hand-written layout per combination. Left 11 columns are
   # always the heatmap; the right 8 split into two 4-wide sub-columns.
-  #   E clone tree | F segment tree   (2 rows, omitted when there is no tree)
-  #   G clustree                      (2 rows, omitted when unavailable)
+  #   E clone tree | F segment tree   (1 row, omitted when there is no tree)
+  #   G clustree                      (1 row, omitted when unavailable)
+  #   H removed-cell umap             (1 row, only when mark_removed_col is set)
   #   B phase facets | C umaps        (2 rows)
   #   B phase facets | D bars         (3 rows)
+  # The trees and clustree take 1 band each rather than 2: they are compact panels
+  # (a single edge for the two-clone trees, a small ladder for clustree) that were
+  # over-sized at 2 bands, and shrinking their bands shrinks the page height with
+  # them (see ggsave below), so every OTHER panel keeps its physical size.
   A <- strrep("A", 11)
   bands <- character(0)
   if (!is.null(clone_tree_plot)) {
     right <- if (!is.null(segment_tree_plot)) "EEEEFFFF" else "EEEEEEEE"
-    bands <- c(bands, rep(paste0(A, right), 2))
+    bands <- c(bands, paste0(A, right))
   }
-  if (!is.null(clustree_plot)) bands <- c(bands, rep(paste0(A, "GGGGGGGG"), 2))
+  if (!is.null(clustree_plot)) bands <- c(bands, paste0(A, "GGGGGGGG"))
+  if (!is.null(removed_umap_plot)) bands <- c(bands, paste0(A, "HHHHHHHH"))
   bands <- c(bands, rep(paste0(A, "BBBBCCCC"), 2), rep(paste0(A, "BBBBDDDD"), 3))
   layout <- paste(bands, collapse = "\n")
 
@@ -1156,7 +1230,8 @@ column_label_rot = 45, segment_tree = TRUE, clustree = TRUE) {
     "D" = clone_distribution_plot,
     "E" = clone_tree_plot,
     "F" = segment_tree_plot,
-    "G" = clustree_plot
+    "G" = clustree_plot,
+    "H" = removed_umap_plot
   )
   collage_plots <- collage_plots[!vapply(collage_plots, is.null, logical(1))]
 
@@ -1216,8 +1291,17 @@ dummy_cluster_order <- function(seu_path, kept_phases = c("pm", "g1", "g1_s", "s
   return(list("0" = cluster_order))
 }
 
+# white -> `color` ramp across the observed range of a numeric column annotation.
+# range() must drop NAs: circlize::colorRamp2() errors on a non-finite break, and
+# module-score columns carried through subsetting/joins can hold NA where the
+# cell-cycle scores never do. A constant column has a zero-width range, which
+# colorRamp2 also rejects -- widen it so the annotation renders flat rather than
+# taking the whole collage down.
 numeric_col_fun <- function(myvec, color) {
-      circlize::colorRamp2(range(myvec), c("white", color))
+      rng <- suppressWarnings(range(myvec, na.rm = TRUE))
+      if (!all(is.finite(rng))) rng <- c(0, 1)
+      if (rng[1] == rng[2]) rng <- rng + c(-0.5, 0.5)
+      circlize::colorRamp2(rng, c("white", color))
     }
 
 #' Plot hypoxia score for a Seurat object

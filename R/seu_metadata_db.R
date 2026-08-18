@@ -5,6 +5,8 @@
 # seurat_objects   - one row per RDS file (identity, size, provenance)
 # cell_metadata    - one row per (filepath, column): dtype, n_unique, JSON summary
 # cell_qc_values   - one row per (filepath, cell): per-cell QC metrics for fast queries
+# cell_scores      - one row per (filepath, cell): per-cell module scores (hypoxia,
+#                    mitochondrial, and the composite) -- a cache, see below
 # cluster_composition - one row per (filepath, cluster): cell counts
 # cluster_markers  - one row per (filepath, cluster, rank): top marker genes
 # qc_metrics       - one row per (filepath, metric): quantile summary
@@ -58,6 +60,18 @@ init_seu_metadata_db <- function(sqlite_path = DEFAULT_DB) {
       nCount_gene   REAL,
       nFeature_gene REAL,
       percent_mt    REAL,
+      PRIMARY KEY (filepath, cell)
+    )")
+
+  DBI::dbExecute(con, "
+    CREATE TABLE IF NOT EXISTS cell_scores (
+      filepath      TEXT,
+      cell          TEXT,
+      sample_id     TEXT,
+      hypoxia       REAL,
+      mt            REAL,
+      hypoxia_score REAL,
+      recorded_at   TEXT,
       PRIMARY KEY (filepath, cell)
     )")
 

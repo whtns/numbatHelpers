@@ -357,6 +357,104 @@ read_cell_barcodes_from_db <- function(filepath, sqlite_path = "batch_hashes.sql
   strsplit(result$cells[[1]], "\n")[[1]]
 }
 
+#' Save per-cell module scores for a Seurat object to the database
+#'
+#' Caches the hypoxia / mitochondrial module scores produced by
+#' [add_hypoxia_score()] in the `cell_scores` table, keyed on the RDS the scores
+#' were computed from. Scoring pulls all of MSigDB and runs
+#' [Seurat::AddModuleScore()] over every cell, and the same object is scored once
+#' per SCNA of interest by each collage builder -- so without this the identical
+#' numbers are recomputed four or more times per sample.
+#'
+#' Only whole-object scores belong here. `hypoxia_score` is rescaled to [0, 1]
+#' over the cells it was computed on, so a row set written from a subset would
+#' hand later readers of the same `filepath` a scale that is not theirs; the
+#' readers guard against that by requiring the cached rows to cover every cell
+#' they ask about.
+#'
+#' @param filepath Path to the Seurat RDS the scores were computed from (key).
+#' @param sample_id Sample identifier.
+#' @param scores A data.frame of per-cell scores with cells as row names and
+#'   columns `hypoxia`, `MT`, `hypoxia_score`.
+#' @param sqlite_path Path to the SQLite database.
+#' @return Invisibly returns filepath.
+#' @export
+save_cell_scores_to_db <- function(filepath, sample_id, scores,
+                                   sqlite_path = "batch_hashes.sqlite") {
+  need <- c("hypoxia", "MT", "hypoxia_score")
+  if (!is.data.frame(scores) || !all(need %in% colnames(scores)) ||
+      nrow(scores) == 0) {
+    return(invisible(filepath))
+  }
+  score_df <- data.frame(
+    filepath      = filepath,
+    cell          = rownames(scores),
+    sample_id     = sample_id,
+    hypoxia       = as.numeric(scores[["hypoxia"]]),
+    mt            = as.numeric(scores[["MT"]]),
+    hypoxia_score = as.numeric(scores[["hypoxia_score"]]),
+    recorded_at   = as.character(Sys.time()),
+    stringsAsFactors = FALSE
+  )
+
+  con <- connect_hash_db(sqlite_path)
+  on.exit(DBI::dbDisconnect(con), add = TRUE)
+  db_retry(DBI::dbExecute(con, paste0(
+    "CREATE TABLE IF NOT EXISTS cell_scores ",
+    "(filepath TEXT, cell TEXT, sample_id TEXT, hypoxia REAL, mt REAL, ",
+    "hypoxia_score REAL, recorded_at TEXT, PRIMARY KEY (filepath, cell))"
+  )))
+  # DELETE + append in ONE transaction: a reader arriving mid-write must see
+  # either the old row set or the new one, never a half-replaced mixture of two
+  # rescalings. Retried as a unit -- a transaction that lost a lock has already
+  # rolled back, so replaying it is safe.
+  db_retry(DBI::dbWithTransaction(con, {
+    DBI::dbExecute(con, "DELETE FROM cell_scores WHERE filepath = ?",
+                   params = list(filepath))
+    DBI::dbWriteTable(con, "cell_scores", score_df, append = TRUE)
+  }))
+  invisible(filepath)
+}
+
+#' Read cached per-cell module scores for a Seurat object from the database
+#'
+#' @param filepath Path to the Seurat RDS file (key used by
+#'   [save_cell_scores_to_db()]).
+#' @param cells Optional character vector of cell barcodes the caller needs. When
+#'   supplied, `NULL` is returned unless the cache covers every one of them --
+#'   a partial cache would leave holes in the annotation, and rows written from a
+#'   different cell set carry a `hypoxia_score` rescaling that does not apply.
+#' @param sqlite_path Path to the SQLite database.
+#' @return A data.frame with row names = cell and columns `hypoxia`, `MT`,
+#'   `hypoxia_score` (ordered to match `cells` when given), or `NULL`.
+#' @export
+read_cell_scores_from_db <- function(filepath, cells = NULL,
+                                     sqlite_path = "batch_hashes.sqlite") {
+  res <- tryCatch({
+    con <- connect_hash_db(sqlite_path)
+    on.exit(DBI::dbDisconnect(con), add = TRUE)
+    if (!DBI::dbExistsTable(con, "cell_scores")) {
+      NULL
+    } else {
+      db_retry(DBI::dbGetQuery(con,
+        "SELECT cell, hypoxia, mt, hypoxia_score FROM cell_scores WHERE filepath = ?",
+        params = list(filepath)))
+    }
+  }, error = function(e) {
+    # A cache miss must never take the collage down -- fall through to rescoring.
+    message("could not read cached cell scores: ", conditionMessage(e))
+    NULL
+  })
+
+  if (is.null(res) || nrow(res) == 0) return(NULL)
+  out <- data.frame(hypoxia = res$hypoxia, MT = res$mt,
+                    hypoxia_score = res$hypoxia_score,
+                    row.names = res$cell, stringsAsFactors = FALSE)
+  if (is.null(cells)) return(out)
+  if (!all(cells %in% rownames(out))) return(NULL)
+  out[cells, , drop = FALSE]
+}
+
 #' Compute clone simplifications from a numbat RDS file
 #'
 #' Derives a named list mapping SCNA labels (e.g. "1q+", "16q-") to primary

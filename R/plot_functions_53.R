@@ -122,6 +122,14 @@ plot_cc_space_plot <- function(seu_path = "output/seurat/SRX11133594_filtered_se
 #'   suppresses the built-in titles and draws them as a rotated `anno_block`
 #'   above the group bar instead. `NULL` (default) keeps ComplexHeatmap's titles.
 #' @param column_split_label_gp `grid::gpar()` for those labels.
+#' @param numeric_col_hues Named character vector of colours, one per NUMERIC
+#'   `group.by` column, e.g. `c(hypoxia_score = "#762A83")`. Each named column's
+#'   annotation is drawn as a `white -> colour` ramp instead of taking whatever
+#'   [scales::hue_pal()] hands it. Without this the numeric annotations are
+#'   coloured by position, so adding one continuous annotation silently
+#'   recolours every other one; pinning the columns that matter keeps a score
+#'   the same colour across collages. Unnamed / absent columns fall back to the
+#'   positional palette.
 #' @param ... Additional arguments passed to other functions
 #' @return Function result
 #' @export
@@ -129,7 +137,8 @@ seu_complex_heatmap <- function(seu, features = NULL, group.by = "ident", cells 
                                 layer = "scale.data", assay = NULL, group.bar.height = 0.01,
                                 column_split = NULL, col_arrangement = "ward.D2", mm_col_dend = 30,
                                 embedding = "pca", column_split_label_rot = NULL,
-                                column_split_label_gp = grid::gpar(fontsize = 9), ...) {
+                                column_split_label_gp = grid::gpar(fontsize = 9),
+                                numeric_col_hues = NULL, ...) {
   
   
   if (length(GetAssayData(seu, layer = "scale.data")) == 0) {
@@ -218,10 +227,16 @@ seu_complex_heatmap <- function(seu, features = NULL, group.by = "ident", cells 
   ha_cols.numeric <- NULL
   if (length(groups.use.numeric) > 0) {
     ha_col_names.numeric <- names(groups.use.numeric)
-    ha_col_hues.numeric <- (scales::hue_pal())(length(ha_col_names.numeric))
+    ha_col_hues.numeric <- stats::setNames(
+      (scales::hue_pal())(length(ha_col_names.numeric)), ha_col_names.numeric)
+    if (!is.null(numeric_col_hues)) {
+      pinned <- numeric_col_hues[names(numeric_col_hues) %in% ha_col_names.numeric]
+      if (length(pinned) > 0)
+        ha_col_hues.numeric[names(pinned)] <- unname(pinned)
+    }
     ha_cols.numeric <- purrr::map2(
       groups.use[ha_col_names.numeric],
-      ha_col_hues.numeric, numeric_col_fun
+      unname(ha_col_hues.numeric[ha_col_names.numeric]), numeric_col_fun
     )
   }
   ha_cols <- c(ha_cols.factor, ha_cols.numeric)

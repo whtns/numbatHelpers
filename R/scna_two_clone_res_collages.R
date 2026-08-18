@@ -64,6 +64,11 @@
 #'   `results/<basename>_<scna>_res<r>_bar_enrichment.csv`.
 #' @param bar_signif_min_cells Clusters smaller than this are not tested; their
 #'   axis label reads `(n<min)` rather than silently going unmarked (default 20).
+#' @param score_annotations Continuous per-cell metadata columns to draw as
+#'   heatmap column annotations beside the cell-cycle scores, e.g.
+#'   `c("hypoxia_score", "mito_score")`. Missing columns are computed via
+#'   [.ensure_hypoxia_scores()] on the full object before the two-clone subset.
+#'   `NULL` (default) keeps the cell-cycle-only annotation.
 #' @return Character vector of PDF paths written (`NA_character_` per failed or
 #'   skipped resolution). Never errors -- best-effort, like the sibling collage
 #'   builders.
@@ -100,6 +105,80 @@
   })
 }
 
+#' Ensure a Seurat object carries `hypoxia_score` and a `mito_score`
+#'
+#' The SCNA collages annotate their heatmap columns with the per-cell hypoxia and
+#' mitochondrial scores. [add_hypoxia_score()] is what produces them in the
+#' pipeline, but only the hypoxia-split objects have been through it -- the
+#' `*_filtered_seu.rds` set the FILTERED collages are built from predates that
+#' step, so the columns have to be computed here.
+#'
+#' Also derives `mito_score`, the mitochondrial module score in its natural
+#' orientation. [add_hypoxia_score()] stores `MT` already multiplied by -1 (so
+#' that averaging it with `hypoxia` gives the composite `hypoxia_score`);
+#' annotating with `MT` directly would read backwards -- pale where mitochondrial
+#' content is highest.
+#'
+#' Computed ONCE PER SAMPLE, on the whole object, and cached in the `cell_scores`
+#' table of `batch_hashes.sqlite` (keyed on the source `.rds`, alongside the
+#' other per-cell numerics in `cell_qc_values`). Two reasons:
+#'
+#' * `hypoxia_score` is rescaled to [0, 1] over whatever cells it is computed on.
+#'   Scoring a two-clone subset would put its 0 and 1 at the subset's extremes,
+#'   so no two panels -- and neither of the two-clone / all-clone views of the
+#'   same sample -- would share a scale. Score the full object, then subset.
+#' * The same `*_filtered_seu.rds` feeds the two-clone and all-clone builders
+#'   once per SCNA of interest, so an uncached score would be recomputed four or
+#'   more times per sample: [add_hypoxia_score()] pulls all of MSigDB and runs
+#'   [Seurat::AddModuleScore()] on every cell each time.
+#'
+#' The cache is reused only when it covers every cell of the object handed in
+#' (see [read_cell_scores_from_db()]), so a differently-filtered object rescores
+#' rather than silently inheriting another subset's rescaled values.
+#'
+#' @param seu A Seurat object.
+#' @param cache_path Path to the `.rds` `seu` was read from; the cache key.
+#'   `NULL` disables caching (always recompute, never write).
+#' @param sqlite_path Path to the metadata SQLite database.
+#' @return `seu` with `hypoxia_score` and `mito_score` present, or unchanged if
+#'   scoring fails -- the caller then simply omits those annotations.
+#' @keywords internal
+.ensure_hypoxia_scores <- function(seu, cache_path = NULL,
+                                   sqlite_path = "batch_hashes.sqlite") {
+  score_cols <- c("hypoxia", "MT", "hypoxia_score")
+  cache_key  <- if (!is.null(cache_path) && length(cache_path) == 1 &&
+                    !is.na(cache_path)) cache_path else NULL
+  sample_id  <- stringr::str_extract(cache_key %||% NA_character_, "SR[RX][0-9]+")
+
+  if (!all(score_cols %in% colnames(seu@meta.data)) && !is.null(cache_key)) {
+    cached <- read_cell_scores_from_db(cache_key, cells = colnames(seu),
+                                       sqlite_path = sqlite_path)
+    if (!is.null(cached)) {
+      for (cl in score_cols) seu@meta.data[[cl]] <- cached[[cl]]
+      message("hypoxia / mito scores read from cell_scores cache for ", cache_key)
+    }
+  }
+
+  if (!all(score_cols %in% colnames(seu@meta.data))) {
+    seu <- tryCatch(add_hypoxia_score(seu), error = function(e) {
+      message("add_hypoxia_score failed (", conditionMessage(e),
+              "); heatmap will omit the hypoxia / mito annotations.")
+      seu
+    })
+    if (all(score_cols %in% colnames(seu@meta.data)) && !is.null(cache_key)) {
+      tryCatch(
+        save_cell_scores_to_db(cache_key, sample_id,
+                               seu@meta.data[, score_cols, drop = FALSE],
+                               sqlite_path = sqlite_path),
+        error = function(e)
+          message("could not cache hypoxia scores: ", conditionMessage(e)))
+    }
+  }
+
+  if ("MT" %in% colnames(seu@meta.data)) seu$mito_score <- -seu$MT
+  seu
+}
+
 plot_scna_two_clone_res_collages <- function(seu_path,
                                              scna_of_interest,
                                              large_clone_comparisons,
@@ -108,7 +187,8 @@ plot_scna_two_clone_res_collages <- function(seu_path,
                                              clone_simplifications = NULL,
                                              assay = "SCT",
                                              bar_signif = TRUE,
-                                             bar_signif_min_cells = 20) {
+                                             bar_signif_min_cells = 20,
+                                             score_annotations = NULL) {
   if (is.null(seu_path) || length(seu_path) == 0 ||
       is.na(seu_path) || !file.exists(seu_path)) {
     return(NA_character_)
@@ -172,6 +252,14 @@ plot_scna_two_clone_res_collages <- function(seu_path,
   # every sample except the one that happened to be scored -- FetchData() errors
   # "'G2M.Score', 'S.Score' not found"). Score on the full-gene assay when missing.
   seu <- .ensure_cc_scores(seu)
+
+  # Same for the hypoxia / mitochondrial scores when the caller asked for them as
+  # column annotations -- computed on the FULL object, before the two-clone
+  # subset, so hypoxia_score's 0..1 rescale spans the sample. Keyed on seu_path,
+  # so the sibling SCNA branches and the all-clone builder reuse these numbers
+  # rather than rescoring the same object.
+  if (length(score_annotations) > 0)
+    seu <- .ensure_hypoxia_scores(seu, cache_path = seu_path)
 
   # Attach the SCNA-of-interest status label the stacked-bar panel groups by
   # (bar_var = "scna_status"). Non-retained clones -> NA (they are not displayed).
@@ -265,6 +353,7 @@ plot_scna_two_clone_res_collages <- function(seu_path,
         clone_simplifications = clone_simplifications,
         bar_var = "scna_status",
         bar_signif = bar_signif, bar_signif_min_cells = bar_signif_min_cells,
+        score_annotations = score_annotations,
         label = glue::glue("_{scna_of_interest}_res{res}_"))
 
       if (length(out) != 1 || is.na(out) || !file.exists(out)) {
