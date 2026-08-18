@@ -165,12 +165,16 @@ plot_distribution_of_clones_across_clusters <- function(seu, seu_name, var_x = "
       geom_bar(position = fill_pos, aes(x = .data[[var_y]], fill = .data[[var_x]])) +
       scale_x_discrete(limits = rev) +
       coord_flip() +
-      labs(caption = paste0(
+      labs(caption = stringr::str_wrap(paste0(
         "Fisher's exact, each ", var_y, " vs all other cells; BH-adjusted across the ",
         sum(!is.na(stats_tbl$p_value)), " tested ", var_y,
         ".  *** q<0.001  ** q<0.01  * q<0.05  . q<0.1;  ns = not significant, ",
-        "n<", signif_min_cells, " = too few cells to test")) +
-      theme_minimal()
+        "n<", signif_min_cells, " = too few cells to test"), width = 60)) +
+      theme_minimal() +
+      # ggplot does not wrap a caption, so str_wrap above inserts the line breaks;
+      # keep the wrapped block left-aligned and small so it does not steal height
+      # from the bars it sits under.
+      theme(plot.caption = ggplot2::element_text(hjust = 0, size = 7))
 
   } else {
     stats_tbl <- NULL
