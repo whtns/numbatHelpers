@@ -13,6 +13,7 @@ Imports:
     ggplot2,
     ggdendro,
     ggpubr,
+    ggrepel,
     gridExtra,
     patchwork,
     plotgardener,

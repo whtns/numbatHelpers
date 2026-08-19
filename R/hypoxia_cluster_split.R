@@ -133,8 +133,18 @@ pick_hypoxia_anchor <- function(counts, stability_tol = 0.05,
 #' @return By default a character vector of outlier cluster ids (possibly
 #'   empty). With `return_detail = TRUE`, a data.frame with columns `cluster`,
 #'   `n_cells`, `top_markers`, `n_hyp_markers`, `matched_genes`, `mean_score`,
-#'   `dom_frac`, `outlier_fence`, `is_outlier`, `phase_mixed`, `flagged`. Never
-#'   errors — returns an empty result of the requested shape on failure.
+#'   `mean_hypoxia`, `mean_mito`, `dom_frac`, `outlier_fence`, `is_outlier`,
+#'   `phase_mixed`, `flagged`. Never errors — returns an empty result of the
+#'   requested shape on failure.
+#'
+#'   `mean_score` is the flagging statistic: the per-cluster mean of the
+#'   COMPOSITE `hypoxia_score`, which [add_hypoxia_score()] builds as
+#'   `rescale(rowMeans(hypoxia, MT))` with `MT` stored negated. That composite
+#'   cannot be decomposed after the fact, so `mean_hypoxia` (raw HALLMARK_HYPOXIA
+#'   module score) and `mean_mito` (raw MT module score, un-negated so higher =
+#'   more mitochondrial) are recorded alongside it. They do not affect any
+#'   decision — they are logged so a reader can tell whether a flagged cluster is
+#'   high on hypoxia genes or merely low on mitochondrial content.
 #' @export
 identify_hypoxia_clusters <- function(seu, grp,
                                       hypoxia_genes = .hypoxia_marker_set,
@@ -146,6 +156,7 @@ identify_hypoxia_clusters <- function(seu, grp,
     data.frame(cluster = character(0), n_cells = integer(0),
                top_markers = character(0), n_hyp_markers = integer(0),
                matched_genes = character(0), mean_score = numeric(0),
+               mean_hypoxia = numeric(0), mean_mito = numeric(0),
                dom_frac = numeric(0),
                outlier_fence = numeric(0), is_outlier = logical(0),
                phase_mixed = logical(0), flagged = logical(0),
@@ -180,13 +191,23 @@ identify_hypoxia_clusters <- function(seu, grp,
       matched[idx] <- top$g
     }
 
-    # per-cluster mean hypoxia_score
-    if ("hypoxia_score" %in% colnames(seu@meta.data)) {
-      sc      <- seu$hypoxia_score
-      cl_mean <- tapply(sc, factor(grpv, levels = clusters), mean, na.rm = TRUE)
-    } else {
-      cl_mean <- stats::setNames(rep(NA_real_, length(clusters)), clusters)
+    # per-cluster means of any metadata column, NA-safe and always in `clusters`
+    # order. All-NA when the column is absent, so a missing score degrades to a
+    # blank column rather than an error.
+    cl_mean_of <- function(col, sign = 1) {
+      if (!col %in% colnames(seu@meta.data))
+        return(stats::setNames(rep(NA_real_, length(clusters)), clusters))
+      tapply(sign * seu@meta.data[[col]], factor(grpv, levels = clusters),
+             mean, na.rm = TRUE)
     }
+
+    # per-cluster mean hypoxia_score -- the flagging statistic
+    cl_mean <- cl_mean_of("hypoxia_score")
+    # Its two ingredients, logged for interpretation only (see @return). MT is
+    # stored negated by add_hypoxia_score() so it can be averaged with hypoxia;
+    # flip it back so mean_mito reads in its natural direction.
+    cl_hyp  <- cl_mean_of("hypoxia")
+    cl_mito <- cl_mean_of("MT", sign = -1)
 
     # per-cluster dominant cell-cycle-phase fraction (for the direct phase gate).
     # NA when no Phase column or no non-NA phase calls in the cluster.
@@ -208,6 +229,8 @@ identify_hypoxia_clusters <- function(seu, grp,
       n_hyp_markers = unname(n_hyp[clusters]),
       matched_genes = unname(matched[clusters]),
       mean_score    = unname(as.numeric(cl_mean[clusters])),
+      mean_hypoxia  = unname(as.numeric(cl_hyp[clusters])),
+      mean_mito     = unname(as.numeric(cl_mito[clusters])),
       dom_frac      = unname(as.numeric(dom_frac[clusters])),
       stringsAsFactors = FALSE)
 
