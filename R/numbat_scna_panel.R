@@ -33,11 +33,61 @@
 .RB_WINDOWS <- data.frame(
   CHROM = c("1", "2", "6", "13", "16"),
   arm   = c("1q", "2p", "6p", "13q", "16q"),
+  event = c("1q_gain", "2p_gain", "6p_gain", "13q_loss", "16q_loss"),
   want  = c("gain", "gain", "gain", "loss", "loss"),
   xmin  = c(123.4, 0, 0, 17.7, 36.8),
   xmax  = c(248.9, 93.9, 59.8, 114.4, 90.3),
   stringsAsFactors = FALSE
 )
+
+# Total length covered by a union of intervals. segs_consensus carries one row
+# per consensus component, so supporting segments routinely overlap or repeat --
+# summing their lengths overcounts and can exceed the arm.
+.union_len <- function(lo, hi) {
+  if (!length(lo)) return(0)
+  o <- order(lo); lo <- lo[o]; hi <- hi[o]
+  tot <- 0; cs <- lo[1]; ce <- hi[1]
+  for (i in seq_along(lo)[-1]) {
+    if (lo[i] > ce) { tot <- tot + (ce - cs); cs <- lo[i]; ce <- hi[i] }
+    else ce <- max(ce, hi[i])
+  }
+  tot + (ce - cs)
+}
+
+#' Fraction of each canonical RB arm covered by a supporting call
+#'
+#' @param segs A `segs_consensus` table.
+#' @return Named numeric, one entry per canonical event, each the union extent of
+#'   the segments supporting it divided by the length of the target arm.
+#' @export
+numbat_rb_arm_frac <- function(segs) {
+  out <- stats::setNames(rep(0, nrow(.RB_WINDOWS)), .RB_WINDOWS$event)
+  if (is.null(segs) || !is.data.frame(segs) || nrow(segs) == 0) return(out)
+  segs <- as.data.frame(segs)
+  if (!all(c("CHROM", "seg_start", "seg_end") %in% names(segs))) return(out)
+  state <- if ("cnv_state_post" %in% names(segs)) segs$cnv_state_post else segs$cnv_state
+  if (is.null(state)) return(out)
+
+  d <- unique(data.frame(
+    CHROM = as.character(segs$CHROM),
+    lo    = as.numeric(segs$seg_start),
+    hi    = as.numeric(segs$seg_end),
+    state = as.character(state),
+    stringsAsFactors = FALSE
+  ))
+
+  for (i in seq_len(nrow(.RB_WINDOWS))) {
+    w    <- .RB_WINDOWS[i, ]
+    alo  <- w$xmin * 1e6; ahi <- w$xmax * 1e6
+    keep <- d$CHROM == w$CHROM &
+      grepl(if (w$want == "gain") "amp" else "del|loh", d$state) &
+      d$hi > alo & d$lo < ahi
+    if (!any(keep, na.rm = TRUE)) next
+    sub <- d[which(keep), , drop = FALSE]
+    out[w$event] <- .union_len(pmax(sub$lo, alo), pmin(sub$hi, ahi)) / (ahi - alo)
+  }
+  out
+}
 
 # numbat's own state palette, so this panel and the heatmap agree on colour.
 .CNV_PAL <- c(amp = "darkred", bamp = "salmon", del = "royalblue",
@@ -90,22 +140,29 @@ numbat_scna_table <- function(nb, non_neutral_only = TRUE) {
     d$cell_frac <- round(unname(fr[d$seg]), 3)
   }
 
+  # rb_event is only stamped when the event clears the arm-coverage floor, so a
+  # focal speck is still listed as a segment but is not labelled as the canonical
+  # arm-level SCNA. arm_frac carries the coverage that decision was made on.
+  fr <- numbat_rb_arm_frac(segs)
   d$rb_event <- ""
+  d$arm_frac <- NA_real_
   for (i in seq_len(nrow(.RB_WINDOWS))) {
     w    <- .RB_WINDOWS[i, ]
-    is_g <- grepl("amp", d$state)
-    is_l <- grepl("del|loh", d$state)
     hit  <- d$CHROM == w$CHROM &
-      (if (w$want == "gain") is_g else is_l) &
+      grepl(if (w$want == "gain") "amp" else "del|loh", d$state) &
       d$end_Mb > w$xmin & d$start_Mb < w$xmax
-    d$rb_event[hit] <- paste0(w$arm, if (w$want == "gain") "+" else "-")
+    if (!any(hit)) next
+    d$arm_frac[hit] <- round(fr[[w$event]], 3)
+    if (fr[[w$event]] >= RB_MIN_ARM_FRAC) {
+      d$rb_event[hit] <- paste0(w$arm, if (w$want == "gain") "+" else "-")
+    }
   }
 
   if (non_neutral_only) d <- d[d$state != "neu", , drop = FALSE]
   d <- d[order(suppressWarnings(as.integer(d$CHROM)), d$start_Mb), , drop = FALSE]
   rownames(d) <- NULL
   d[, c("CHROM", "arm", "seg", "start_Mb", "end_Mb", "size_Mb",
-        "state", "LLR", "cell_frac", "n_genes", "n_snps", "rb_event")]
+        "state", "LLR", "cell_frac", "n_genes", "n_snps", "arm_frac", "rb_event")]
 }
 
 #' Per-chromosome SCNA map with arms, coordinates, states and cell fractions

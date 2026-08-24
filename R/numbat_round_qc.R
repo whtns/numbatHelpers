@@ -20,47 +20,50 @@
 # "a"/"b"/"c'" with no arm, no coordinates and no state name, which is not
 # enough to inspect a call.
 
-# The five canonical RB arm events, hg38. Kept identical to
-# src/select_numbat_round.R and src/verify_rebuilt_rds.R -- if these coordinates
-# ever change, change them in all three or the numbers stop being comparable.
-.RB_EVENT_DEFS <- list(
-  `1q_gain`  = list(chrom = "1",  side = "end",   pos = 125e6,  dir = "gain"),
-  `2p_gain`  = list(chrom = "2",  side = "start", pos = 93e6,   dir = "gain"),
-  `6p_gain`  = list(chrom = "6",  side = "start", pos = 59e6,   dir = "gain"),
-  `13q_loss` = list(chrom = "13", side = "any",   pos = NA,     dir = "loss"),
-  `16q_loss` = list(chrom = "16", side = "end",   pos = 36.8e6, dir = "loss")
-)
+# Arm coverage required before a call counts as the canonical arm-level event.
+#
+# WHY THIS EXISTS. The original rule counted any del/loh distal to the chr16
+# centromere as "16q_loss", and any amp in the 6p window as "6p_gain", with no
+# size floor. That let focal specks masquerade as arm-level RB SCNAs:
+# SRX10264524 was credited with 16q_loss on the strength of a 1.6 Mb deletion at
+# 83.9-85.5 Mb -- 3% of the arm, 11 genes, LLR 8.7, invisible on the heatmap.
+#
+# WHERE 0.15 COMES FROM. Across the 124 non-zero (sample, event) coverages in
+# the 39-sample SRX cohort at their selected rounds, the values fall into a
+# cluster of 18 running 0.009-0.121, then a gap, then a dense continuum from
+# 0.228 upward. 0.15 sits in that gap: it removes exactly the speck cluster and
+# nothing else. Any value in (0.121, 0.170) gives the same answer.
+#
+# 0.25 was tried first and rejected. It was chosen from the 20 events gained by
+# round selection, where the apparent gap runs 0.052-0.297 -- but that subset is
+# biased, and against the full cohort 0.25 cuts the dense region, separating
+# 0.233 from 0.257 for no reason. GISTIC's broad/focal convention of 0.50 is
+# more aggressive still: it would discard SRX11133587's 23 Mb 16q deletion at
+# LLR 9283, plainly an arm-level event at arm_frac 0.43.
+RB_MIN_ARM_FRAC <- 0.15
 
 #' Canonical RB SCNAs present in a numbat consensus segmentation
 #'
+#' An event counts only when the segments supporting it cover at least
+#' `min_arm_frac` of the target arm. Without that floor a focal deletion of a
+#' few Mb is indistinguishable from arm-level loss in the output, which is not
+#' what "16q-" means in retinoblastoma. See [numbat_rb_arm_frac()].
+#'
 #' @param segs A `segs_consensus` table (data.frame/data.table) from a numbat
 #'   object or a `segs_consensus_k.tsv` file.
-#' @return Character vector of event names, e.g. `c("1q_gain", "16q_loss")`.
-#'   Empty character vector if `segs` is NULL, empty, or carries none.
+#' @param min_arm_frac Minimum fraction of the target arm that supporting
+#'   segments must cover. Defaults to `RB_MIN_ARM_FRAC` (0.15). Pass 0 to
+#'   reproduce the old size-agnostic behaviour.
+#' @return Character vector of event names, e.g. `c("1q_gain", "16q_loss")`,
+#'   carrying an `arm_frac` attribute with the coverage of all five events.
 #' @export
-numbat_rb_events <- function(segs) {
-  if (is.null(segs) || !is.data.frame(segs) || nrow(segs) == 0) return(character(0))
-  segs <- as.data.frame(segs)
-  if (!all(c("CHROM", "seg_start", "seg_end") %in% names(segs))) return(character(0))
-
-  # cnv_state_post is numbat's posterior state call and is what the selection
-  # scored on; cnv_state is the pre-posterior call and only used as a fallback.
-  state <- if ("cnv_state_post" %in% names(segs)) segs$cnv_state_post else segs$cnv_state
-  if (is.null(state)) return(character(0))
-
-  chrom <- as.character(segs$CHROM)
-  gain  <- grepl("amp", state)
-  loss  <- grepl("del|loh", state)
-
-  hits <- vapply(names(.RB_EVENT_DEFS), function(nm) {
-    d  <- .RB_EVENT_DEFS[[nm]]
-    on <- chrom == d$chrom & (if (d$dir == "gain") gain else loss)
-    if (d$side == "end")   on <- on & segs$seg_end   > d$pos
-    if (d$side == "start") on <- on & segs$seg_start < d$pos
-    any(on, na.rm = TRUE)
-  }, logical(1))
-
-  names(.RB_EVENT_DEFS)[hits]
+numbat_rb_events <- function(segs, min_arm_frac = RB_MIN_ARM_FRAC) {
+  fr <- numbat_rb_arm_frac(segs)
+  # fr > 0 as well as the threshold: an uncalled arm has coverage exactly 0, and
+  # `0 >= 0` would otherwise credit every sample with all five events whenever
+  # min_arm_frac is 0.
+  hit <- names(fr)[fr > 0 & fr >= min_arm_frac]
+  structure(hit, arm_frac = fr)
 }
 
 #' Which consensus round on disk a numbat object's segmentation came from
