@@ -132,7 +132,7 @@ qc_numbat_rds <- function(numbat_rds_file,
 
   nb <- tryCatch(readRDS(numbat_rds_file), error = function(e) NULL)
 
-  na_row <- function(msg) data.frame(
+  .na_row_base <- function(msg) data.frame(
     sample_id = sample_id, readable = FALSE, object_class = NA_character_,
     stamped_round = NA_integer_, manifest_round = NA_integer_,
     disk_round = NA_integer_, rebuilt = NA, round_ok = NA,
@@ -142,6 +142,12 @@ qc_numbat_rds <- function(numbat_rds_file,
     mtime = as.character(finfo$mtime), pdf = NA_character_,
     note = msg, stringsAsFactors = FALSE
   )
+  na_row <- function(msg) {
+    z <- .na_row_base(msg)
+    cbind(z, as.data.frame(
+      stats::setNames(as.list(rep(NA, 4)), c("1q", "2p", "6p", "16q")),
+      check.names = FALSE))
+  }
 
   if (is.null(nb)) return(na_row("readRDS failed"))
 
@@ -257,7 +263,19 @@ qc_numbat_rds <- function(numbat_rds_file,
     }
   }
 
-  data.frame(
+  # Per-arm presence columns for the four canonical RB copy-number events.
+  # 13q is deliberately excluded: biallelic RB1 inactivation does not require
+  # 13q copy loss -- two point mutations, or mutation plus promoter
+  # hypermethylation, inactivate RB1 with no copy change and no LOH, and
+  # MYCN-amplified RB is RB1 proficient. A 13q column would therefore be read as
+  # meaning something it does not.
+  rb4 <- c(`1q` = "1q_gain", `2p` = "2p_gain", `6p` = "6p_gain", `16q` = "16q_loss")
+  rb4_cols <- as.data.frame(
+    lapply(rb4, function(e) e %in% events),
+    check.names = FALSE, stringsAsFactors = FALSE
+  )
+
+  cbind(data.frame(
     sample_id         = sample_id,
     readable          = TRUE,
     object_class      = paste(class(nb), collapse = ","),
@@ -281,5 +299,5 @@ qc_numbat_rds <- function(numbat_rds_file,
     pdf               = pdf_path,
     note              = trimws(pdf_note),
     stringsAsFactors  = FALSE
-  )
+  ), rb4_cols)
 }
