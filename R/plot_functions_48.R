@@ -52,6 +52,10 @@ plot_clone_tree <- function(clone_df, tumor_id, nb_path, clone_simplifications =
 
   mynb <- readRDS(nb_path)
 
+  # Node count of the FULL numbat tree, captured before the filter below, so the
+  # steps that follow can tell a whole-tree plot from a subset one.
+  n_nodes_full <- igraph::vcount(mynb$mut_graph)
+
   mynb$mut_graph <-
     mynb$mut_graph |>
     tidygraph::as_tbl_graph() %>%
@@ -61,6 +65,12 @@ plot_clone_tree <- function(clone_df, tumor_id, nb_path, clone_simplifications =
     identity()
 
   mynb$clone_post <- dplyr::filter(mynb$clone_post, cell %in% clone_df$cell)
+
+  # Did the filter drop any clone? The two-clone SCNA collages draw this panel
+  # beside a clone UMAP, a clone heatmap annotation and a stacked bar captioned
+  # "6p+ (clone 7)" / "preceding (clone 4)", all of which label cells by
+  # `clone_opt`, so a subset tree has to keep speaking numbat clone ids.
+  subset_tree <- igraph::vcount(mynb$mut_graph) != n_nodes_full
 
   ## clone tree ------------------------------
 
@@ -77,20 +87,34 @@ plot_clone_tree <- function(clone_df, tumor_id, nb_path, clone_simplifications =
   }
 
   # Renumber clones in BFS tree order so clone numbers follow phylogenetic order
-  g <- mynb$mut_graph
-  root_v <- which(igraph::degree(g, mode = "in") == 0)
-  bfs_order <- igraph::bfs(g, root = root_v, mode = "out")$order
-  old_clones <- igraph::V(g)$clone[bfs_order]
-  remap <- setNames(seq_along(old_clones), as.character(old_clones))
+  # -- but ONLY when the whole tree is on show. numbat's own clone ids are not in
+  # phylogenetic order, so this makes a full tree read top-to-bottom; on a subset
+  # it would relabel the two surviving clones 1 and 2 and break the agreement
+  # with `clone_opt` that the rest of the collage depends on.
+  if (!subset_tree) {
+    g <- mynb$mut_graph
+    root_v <- which(igraph::degree(g, mode = "in") == 0)
+    bfs_order <- igraph::bfs(g, root = root_v, mode = "out")$order
+    old_clones <- igraph::V(g)$clone[bfs_order]
+    remap <- setNames(seq_along(old_clones), as.character(old_clones))
 
-  igraph::V(mynb$mut_graph)$clone <- as.integer(remap[as.character(igraph::V(mynb$mut_graph)$clone)])
-  mynb$clone_post <- mynb$clone_post %>%
-    dplyr::mutate(clone_opt = as.integer(remap[as.character(clone_opt)]))
-  clone_df$clone_opt <- as.integer(remap[as.character(clone_df$clone_opt)])
+    igraph::V(mynb$mut_graph)$clone <- as.integer(remap[as.character(igraph::V(mynb$mut_graph)$clone)])
+    mynb$clone_post <- mynb$clone_post %>%
+      dplyr::mutate(clone_opt = as.integer(remap[as.character(clone_opt)]))
+    clone_df$clone_opt <- as.integer(remap[as.character(clone_df$clone_opt)])
+  }
 
-  nclones <- max(as.integer(unique(clone_df$clone_opt)), na.rm = TRUE)
-  mypal <- scales::hue_pal()(nclones) %>%
-    set_names(1:nclones)
+  # One hue per DISPLAYED clone. plot_mut_history() colours by numbat's
+  # label_genotype() numbering, which is always 1..n over the nodes it is given,
+  # so the palette has to be named 1..n and sized to the nodes on show. For a
+  # whole tree the renumbering above already made the ids a contiguous 1..n, so
+  # this is the previous `hue_pal()(max(clone_opt))` named 1:max unchanged; for a
+  # two-clone subset it now yields the same two hues, in the same order, as the
+  # two-level clone UMAP beside it instead of the first two of a 7-colour ramp.
+  .clones_shown <- unique(stats::na.omit(as.integer(clone_df$clone_opt)))
+  n_display <- if (subset_tree) length(.clones_shown) else max(.clones_shown)
+  mypal <- scales::hue_pal()(n_display) %>%
+    set_names(seq_len(n_display))
 
   plot_title <- ifelse(is.null(sample_id), tumor_id, sample_id)
 
@@ -137,7 +161,24 @@ plot_clone_tree <- function(clone_df, tumor_id, nb_path, clone_simplifications =
     }
   }
 
-  clone_plot$data$clone <- clone_plot$data$id
+  # numbat's plot_mut_history() runs the graph through label_genotype(), which
+  # renumbers the nodes 1..n, so the plot's `clone` column -- what the node text
+  # is mapped to -- is NOT a numbat clone id. `id` is the node's index in the
+  # graph handed to numbat.
+  #
+  # For a whole tree that index IS the intended numbering, which is why this has
+  # always read correctly there. For a SUBSET tree it is the index in the FULL
+  # tree: clones 4 and 7 of SRX14116946 sit at indices 8 and 10, so the two-clone
+  # 6p collage drew a tree labelled "8 -> 10" beside panels labelled clone 4 and
+  # clone 7, making it look as though the collage held clones other than the two
+  # it is restricted to. Relabel a subset tree from the graph's own clone ids.
+  if (subset_tree) {
+    clone_ids <- setNames(igraph::V(mynb$mut_graph)$clone,
+                          as.character(igraph::V(mynb$mut_graph)$id))
+    clone_plot$data$clone <- unname(clone_ids[as.character(clone_plot$data$id)])
+  } else {
+    clone_plot$data$clone <- clone_plot$data$id
+  }
 
   return(clone_plot)
 }

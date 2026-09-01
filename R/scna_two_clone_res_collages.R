@@ -69,6 +69,14 @@
 #'   `c("hypoxia_score", "mito_score")`. Missing columns are computed via
 #'   [.ensure_hypoxia_scores()] on the full object before the two-clone subset.
 #'   `NULL` (default) keeps the cell-cycle-only annotation.
+#' @param .comparison Internal. Restricts the run to a single named comparison
+#'   from `large_clone_comparisons` instead of looking one up by SCNA. Set by the
+#'   recursive call the function makes when a sample has more than one comparison
+#'   matching `scna_of_interest`; not meant to be passed by callers.
+#' @param .label_tag Internal. Clone-pair tag (e.g. `"4v3"`) appended to the SCNA
+#'   in the output filename, so the per-comparison collage sets of such a sample
+#'   do not overwrite each other. `NULL` (the single-comparison case) leaves the
+#'   filename unchanged.
 #' @return Character vector of PDF paths written (`NA_character_` per failed or
 #'   skipped resolution). Never errors -- best-effort, like the sibling collage
 #'   builders.
@@ -188,7 +196,9 @@ plot_scna_two_clone_res_collages <- function(seu_path,
                                              assay = "SCT",
                                              bar_signif = TRUE,
                                              bar_signif_min_cells = 20,
-                                             score_annotations = NULL) {
+                                             score_annotations = NULL,
+                                             .comparison = NULL,
+                                             .label_tag = NULL) {
   if (is.null(seu_path) || length(seu_path) == 0 ||
       is.na(seu_path) || !file.exists(seu_path)) {
     return(NA_character_)
@@ -201,15 +211,57 @@ plot_scna_two_clone_res_collages <- function(seu_path,
   slug <- stringr::str_remove(fs::path_file(seu_path), "_filtered_seu.*")
   key  <- if (slug %in% names(large_clone_comparisons)) slug else sample_id
   comps <- names(large_clone_comparisons[[key]])
-  comp  <- comps[stringr::str_detect(comps, stringr::fixed(scna_of_interest))]
+
+  # Match the SCNA as a whole TOKEN rather than as a substring. Comparison names
+  # are "<N>_v_<M>_<tok>[_<tok>...]" with tokens like "1q+" / "16q-", so a plain
+  # str_detect(fixed("1q")) would also fire on a "11q+" or "21q+" comparison, and
+  # fixed("6p") on "16p+". No such comparison exists in the config today; this
+  # keeps one from silently pulling in the wrong clone pair if one is added.
+  .matches_scna <- function(cmp) {
+    toks <- stringr::str_split(
+      stringr::str_remove(cmp, "^[0-9]+_v_[0-9]+_"), "_")[[1]]
+    any(stringr::str_remove(toks, "[+-]$") == scna_of_interest)
+  }
+  comp <- if (!is.null(.comparison)) .comparison else {
+    comps[vapply(comps, .matches_scna, logical(1), USE.NAMES = FALSE)]
+  }
   if (length(comp) == 0) {
     message(sample_id, ": no ", scna_of_interest,
             " clone comparison in large_clone_comparisons -> skip")
     return(NA_character_)
   }
 
-  # Acquiring clone N and preceding clone M from the `<N>_v_<M>` prefix, unioned
-  # across every comparison matching this SCNA (usually one).
+  # A sample can acquire the same SCNA independently on two branches -- e.g.
+  # SRX10264526 gains 1q in both "2_v_1_1q+_16q-" and "4_v_3_1q+". This used to
+  # take the UNION of the clones across every matching comparison, which turned a
+  # "two-clone" collage into a four-clone one (2 vs 4 vs 1 vs 3, 11164 cells) and
+  # made the acquiring/preceding contrast unreadable. Recurse instead: one
+  # strictly two-clone collage set per comparison, with the clone pair in the
+  # filename so the sets never collide on disk. Single-comparison samples -- all
+  # but one today -- take the path below unchanged and keep their current names.
+  if (length(comp) > 1) {
+    message(sample_id, " ", scna_of_interest, ": ", length(comp),
+            " matching comparisons (", paste(comp, collapse = ", "),
+            "); building one two-clone collage set for each")
+    return(unlist(purrr::map(comp, function(cmp) {
+      plot_scna_two_clone_res_collages(
+        seu_path                = seu_path,
+        scna_of_interest        = scna_of_interest,
+        large_clone_comparisons = large_clone_comparisons,
+        resolutions             = resolutions,
+        nb_paths                = nb_paths,
+        clone_simplifications   = clone_simplifications,
+        assay                   = assay,
+        bar_signif              = bar_signif,
+        bar_signif_min_cells    = bar_signif_min_cells,
+        score_annotations       = score_annotations,
+        .comparison             = cmp,
+        .label_tag              = stringr::str_replace(
+          stringr::str_extract(cmp, "[0-9]+_v_[0-9]+"), "_v_", "v"))
+    }), use.names = FALSE))
+  }
+
+  # Acquiring clone N and preceding clone M from the `<N>_v_<M>` prefix.
   retained_clones <- comp |>
     stringr::str_extract("[0-9]+_v_[0-9]+") |>
     stringr::str_split("_v_", simplify = TRUE) |>
@@ -227,7 +279,8 @@ plot_scna_two_clone_res_collages <- function(seu_path,
   # acquiring clone N gets the signed SCNA token from the comparison name
   # (e.g. "1q+", "16q-"), the immediately-preceding clone M gets "preceding",
   # each tagged with its numbat clone id -> e.g. "1q+ (clone 2)" /
-  # "preceding (clone 1)". Parsed per matching comparison (usually one).
+  # "preceding (clone 1)". `comp` is a single comparison by this point -- samples
+  # with several are split into one run each above -- so this loop runs once.
   scna_label_map <- character(0)
   for (cmp in comp) {
     pair <- stringr::str_split(stringr::str_extract(cmp, "[0-9]+_v_[0-9]+"),
@@ -324,6 +377,11 @@ plot_scna_two_clone_res_collages <- function(seu_path,
 
   if (!isTRUE(recomputed)) seu <- .stash_clustree_sweep(seu, assay)
 
+  # Only samples with more than one comparison for this SCNA carry the clone-pair
+  # tag (e.g. "1q-4v3"); everywhere else the filename stays exactly as before.
+  scna_label <- if (is.null(.label_tag)) scna_of_interest else
+    paste0(scna_of_interest, "-", .label_tag)
+
   purrr::map_chr(resolutions, function(res) {
     tryCatch({
       col <- glue::glue("{assay}_snn_res.{res}")
@@ -354,7 +412,7 @@ plot_scna_two_clone_res_collages <- function(seu_path,
         bar_var = "scna_status",
         bar_signif = bar_signif, bar_signif_min_cells = bar_signif_min_cells,
         score_annotations = score_annotations,
-        label = glue::glue("_{scna_of_interest}_res{res}_"))
+        label = glue::glue("_{scna_label}_res{res}_"))
 
       if (length(out) != 1 || is.na(out) || !file.exists(out)) {
         message("!! two-clone scna collage produced NO pdf (got '",
