@@ -661,7 +661,13 @@ assemble_diploid_seu <- function(filtered_seus_paths,
       }
       seu$sample_source <- sample_id
       seu <- plot_celltype_predictions(seu, sample_id = sample_id, group.by = "gene_snn_res.0.2")$seu
-      cone_mask <- tolower(seu$type) == "cones"
+      # Accept both spellings. plot_celltype_predictions() builds its reference
+      # with filter(type %in% str_remove(celltypes, "s$")), so the values it
+      # assigns to seu$type are the SINGULAR plae labels -- "Cone", not
+      # "Cones". Testing only the plural made this mask always FALSE, every
+      # sample return NULL, and the function error out on the empty list; that
+      # is why ks_diploid_seu never produced anything. (github #44)
+      cone_mask <- tolower(seu$type) %in% c("cone", "cones")
       if (!any(cone_mask)) return(NULL)
       seu[, cone_mask]
     }

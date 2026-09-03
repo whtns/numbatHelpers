@@ -6,6 +6,7 @@ Authors@R:
 Description: Plotting and analysis functions for numbat output
 License: MIT
 Imports:
+    data.table,
     dplyr,
     fs,
     GenomeInfoDb,
@@ -15,6 +16,7 @@ Imports:
     ggpubr,
     ggrepel,
     gridExtra,
+    numbat,
     patchwork,
     plotgardener,
     purrr,

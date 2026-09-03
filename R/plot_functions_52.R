@@ -652,6 +652,7 @@ collate_sample_summary <- function(ideogram_res_s06a_unfiltered,
                                    filtered_numbat_bulk_clones,
                                    low_hypoxia_numbat_bulk_clones,
                                    filtering_cell_counts_table = NULL,
+                                   cell_depth_sqlite = "batch_hashes.sqlite",
                                    density = 300) {
 
   tree_files_vec <- unlist(unfiltered_clone_tree_files)
@@ -941,8 +942,8 @@ collate_sample_summary <- function(ideogram_res_s06a_unfiltered,
     "Karyogram (unfiltered)",
     "Unfiltered",
     "Unfiltered fig_s03a",
-    "Unfiltered expression",
-    "Unfiltered bulk clones",
+    "Expression (numbat run; same in all columns)",
+    "Bulk clones (numbat run; same in all columns)",
     n_cells = n_unfiltered_cells
   )
 
@@ -956,8 +957,8 @@ collate_sample_summary <- function(ideogram_res_s06a_unfiltered,
     "Karyogram (filtered)",
     "Filtered",
     "Filtered fig_s03a",
-    "Filtered expression",
-    "Filtered bulk clones",
+    "Expression (numbat run; same in all columns)",
+    "Bulk clones (numbat run; same in all columns)",
     n_cells = n_filtered_cells
   )
 
@@ -971,8 +972,8 @@ collate_sample_summary <- function(ideogram_res_s06a_unfiltered,
     "Karyogram (low hypoxia)",
     "Low hypoxia",
     "Low hypoxia fig_s03a",
-    "Low hypoxia expression",
-    "Low hypoxia bulk clones",
+    "Expression (numbat run; same in all columns)",
+    "Bulk clones (numbat run; same in all columns)",
     n_cells = n_low_hypoxia_cells
   )
 
@@ -987,6 +988,20 @@ collate_sample_summary <- function(ideogram_res_s06a_unfiltered,
       else col
     })
     rows[[length(rows) + 1L]] <- do.call(c, all_cols) |> magick::image_append(stack = FALSE)
+  }
+
+  # Sequencing depth (github #43). One row, not one per column: it describes the
+  # UNFILTERED cell set -- which is the set numbat is actually run on, since
+  # run_numbat.R subsets on cell type only and numbat's min_depth defaults to 0.
+  # Repeating it in all three columns would say the same thing three times.
+  depth_pdf <- tryCatch(
+    plot_cell_depth_panel(sample_id, sqlite_path = cell_depth_sqlite),
+    error = function(e) NA_character_)
+  if (!is.na(depth_pdf) && file.exists(depth_pdf)) {
+    depth_img <- tryCatch(
+      annotate_panel(depth_pdf, "Sequencing depth of the cells numbat saw"),
+      error = function(e) NULL)
+    if (!is.null(depth_img)) rows[[length(rows) + 1L]] <- depth_img
   }
 
   if (length(rows) == 0) {
