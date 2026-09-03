@@ -47,6 +47,18 @@ plot_celltype_predictions <- function(seu_path, sample_id, plae_ref = NULL, grou
     query_genes <- VariableFeatures(seu)
   }
 
+  # Some objects reach here with no variable features on the default assay --
+  # SRX22868102's low-hypoxia object has zero, where a normal sample has 2000.
+  # That is a provenance quirk of how the object was built, not a modelling
+  # choice, so compute them rather than failing: with an empty query the
+  # reference is empty too and clustify() dies on an out-of-bounds subscript.
+  if (length(query_genes) == 0) {
+    message("plot_celltype_predictions: no variable features on ",
+            DefaultAssay(seu), " for ", sample_id, "; computing them")
+    seu <- Seurat::FindVariableFeatures(seu, verbose = FALSE)
+    query_genes <- VariableFeatures(seu)
+  }
+
   for (assay_name in SeuratObject::Assays(seu)) {
     if (inherits(seu[[assay_name]], "Assay5"))
       seu[[assay_name]] <- SeuratObject::JoinLayers(seu[[assay_name]])
@@ -76,6 +88,21 @@ plot_celltype_predictions <- function(seu_path, sample_id, plae_ref = NULL, grou
       identity()
   } else {
     plae_ref <- plae_ref[rownames(plae_ref) %in% query_genes, colnames(plae_ref) %in% celltypes]
+  }
+
+  # clustify() subsets the reference by query_genes, so any query gene the
+  # reference lacks is an out-of-bounds subscript. plae_ref is built by
+  # filtering the plae table to genes in query_genes, so the reverse inclusion
+  # does NOT hold: variable features absent from plae survive in query_genes
+  # but have no reference row. Whether that bites depends on the sample's
+  # variable features -- SRX22868102 was the first of 22 to hit it, with
+  # "subscript out of bounds" from ref_mat[gene_constraints, , drop = FALSE].
+  # Constrain the query to what the reference can actually answer.
+  query_genes <- intersect(query_genes, rownames(plae_ref))
+  if (length(query_genes) < 10) {
+    stop("plot_celltype_predictions: only ", length(query_genes),
+         " of the query genes are present in the plae reference for ",
+         sample_id, "; too few to correlate against")
   }
 
   res <- clustify(
