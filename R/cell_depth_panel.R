@@ -47,11 +47,17 @@ get_sample_cell_depth <- function(sample_id,
   if (is.null(con)) return(empty)
   on.exit(try(DBI::dbDisconnect(con), silent = TRUE), add = TRUE)
 
+  # Match on FILEPATH, not sample_id. The sample_id column is taken from the
+  # object's own metadata, and for three samples that is the SRR accession even
+  # though the file is named for the SRX one -- e.g.
+  # output/seurat/SRX10264520_seu.rds carries sample_id "SRR13884243". Keying on
+  # sample_id silently returned nothing for those. The filepath is canonical.
+  # A few cells also carry a NULL sample_id; filepath picks those up too.
   d <- tryCatch(
     db_retry(DBI::dbGetQuery(con, "
       SELECT filepath, cell, nCount_gene, nFeature_gene, percent_mt
       FROM   cell_qc_values
-      WHERE  sample_id = ?", params = list(sample_id))),
+      WHERE  filepath LIKE ?", params = list(paste0("%/", sample_id, "_%")))),
     error = function(e) NULL)
   if (is.null(d) || nrow(d) == 0) return(empty)
 
