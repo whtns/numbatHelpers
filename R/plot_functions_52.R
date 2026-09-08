@@ -768,9 +768,16 @@ collate_sample_summary <- function(ideogram_res_s06a_unfiltered,
     s03a_low_hypoxia <- cands_low_hypoxia[file.exists(cands_low_hypoxia)]
   }
 
-  # Read a PDF and attach a compact label strip above it
-  annotate_panel <- function(path, label) {
-    img <- magick::image_read_pdf(path, density = density)[1]
+  # Read one page of a PDF and attach a compact label strip above it.
+  # page defaults to 1; numbat bulk panels carry the haplotype/allele track on
+  # page 2 (numbat_bulk_panel.R emits expression+allele, then allele_only), so
+  # a hard-coded [1] here is why #41's haplotype view was invisible in the
+  # summaries even after the PDFs started carrying it. Returns NULL rather than
+  # erroring when the page does not exist, so single-page PDFs still render.
+  annotate_panel <- function(path, label, page = 1L) {
+    pages <- magick::image_read_pdf(path, density = density)
+    if (page > length(pages)) return(NULL)
+    img <- pages[page]
     img_info <- magick::image_info(img)[1, ]
     label_strip_height <- max(50L, as.integer(round(img_info$height * 0.05)))
     label_strip <- magick::image_blank(img_info$width, label_strip_height, color = "white")
@@ -873,6 +880,7 @@ collate_sample_summary <- function(ideogram_res_s06a_unfiltered,
                                hm_label,
                                expr_label,
                                bulk_label,
+                               haplo_label = "Haplotype / allele (numbat run; same in all columns)",
                                n_cells = NULL) {
 
     # Build middle rows first so we can derive the column width
@@ -920,6 +928,17 @@ collate_sample_summary <- function(ideogram_res_s06a_unfiltered,
       magick::image_blank(col_width, 700L, color = "white")
     }
 
+    # Haplotype / allele track = page 2 of the same bulk PDF (#41). Absent for
+    # any panel still rendered by the old single-page path, hence the NULL
+    # check rather than a blank placeholder -- a blank row would imply the
+    # haplotype data is missing when the panel simply predates the change.
+    row5b <- if (length(existing_bulk) > 0) {
+      img <- annotate_panel(existing_bulk[[1L]], haplo_label, page = 2L)
+      if (is.null(img)) NULL else magick::image_scale(img, paste0(col_width, "x"))
+    } else {
+      NULL
+    }
+
     count_strip <- if (!is.null(n_cells) && !is.na(n_cells)) {
       strip <- magick::image_blank(col_width, 70L, color = "grey90")
       magick::image_annotate(strip,
@@ -927,7 +946,7 @@ collate_sample_summary <- function(ideogram_res_s06a_unfiltered,
         size = 48, color = "black", gravity = "center", weight = 700)
     } else NULL
 
-    col_rows <- purrr::compact(list(count_strip, row1, row2, row3, row3b, row4, row5))
+    col_rows <- purrr::compact(list(count_strip, row1, row2, row3, row3b, row4, row5, row5b))
     if (length(col_rows) == 0) return(NULL)
     make_col(col_rows)
   }
