@@ -648,11 +648,39 @@ assemble_diploid_seu <- function(filtered_seus_paths,
   paths <- paths[!is.na(paths)]
   sample_ids <- stringr::str_extract(paths, "SR[RX][0-9]+")
 
+  # One unusable sample must not kill a multi-hour cohort build. Failures are
+  # dropped to NULL with a loud message and are visible afterwards by their
+  # absence from results/diploid_seu_composition.csv.
+  safely_prep <- function(f) function(path, sample_id) {
+    tryCatch(f(path, sample_id), error = function(e) {
+      message("diploid prep failed for ", sample_id, ": ", conditionMessage(e))
+      NULL
+    })
+  }
+
   cone_seus <- purrr::imap(
     purrr::set_names(paths, sample_ids),
-    function(path, sample_id) {
+    safely_prep(function(path, sample_id) {
       seu <- readRDS(path)
-      diploid_mask <- is.na(seu$scna) | seu$scna == ""
+      # Key the diploid selection on GT_opt, numbat's own genotype string, NOT
+      # on seu$scna. scna is a DISPLAY label from simplify_gt_col(), which
+      # collapses to "" both for a genuinely diploid clone and for any clone
+      # whose GT tokens miss the clone-simplification key -- the two are
+      # indistinguishable downstream. Worse, that key currently never reaches
+      # the labelling code at all: large_clone_simplifications_per_sample hands
+      # back a label->seg list while filter_cluster_save_seu() indexes it by
+      # sample_id, so EVERY cell in every saved object carries scna == "".
+      # Selecting on scna would pool the entire low-hypoxia cohort as
+      # "diploid". GT_opt sits on the same objects and is empty only for
+      # numbat's normal clone. See docs/initial_clone_scna_audit.md.
+      if (!"GT_opt" %in% colnames(seu@meta.data)) {
+        stop("no GT_opt column in ", sample_id,
+             "; cannot identify diploid cells safely")
+      }
+      # NA means the cell is absent from clone_post -- unknown, not diploid, so
+      # it is excluded rather than assumed normal. (Cohort-wide this is
+      # currently 0 cells; the guard is here so it stays that way.)
+      diploid_mask <- !is.na(seu$GT_opt) & seu$GT_opt == ""
       if (!any(diploid_mask)) return(NULL)
       seu <- seu[, diploid_mask]
       for (assay_name in SeuratObject::Assays(seu)) {
@@ -670,9 +698,18 @@ assemble_diploid_seu <- function(filtered_seus_paths,
       cone_mask <- tolower(seu$type) %in% c("cone", "cones")
       if (!any(cone_mask)) return(NULL)
       seu[, cone_mask]
-    }
+    })
   ) |>
     purrr::compact()
+
+  if (length(cone_seus) == 0) {
+    stop("no sample yielded diploid cone cells; refusing to build an empty ",
+         "diploid object")
+  }
+  # ncol() on a Seurat object is not reliably integer, so accumulate as double
+  message("diploid panel: ", length(cone_seus), " samples contributed ",
+          sum(vapply(cone_seus, function(s) as.numeric(ncol(s)), numeric(1))),
+          " cells")
 
   if (integrate) {
     old_assay_version <- getOption("Seurat.object.assay.version")
