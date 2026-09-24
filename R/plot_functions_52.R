@@ -635,22 +635,16 @@ make_table_s10 <- make_table_s07
 #' @export
 collate_sample_summary <- function(ideogram_res_s06a_unfiltered,
                                    ideogram_res_s06a_filtered,
-                                   ideogram_res_s06a_low_hypoxia,
                                    unfiltered_clone_tree_files,
                                    unfiltered_clone_trees_segments_files,
                                    filtered_clone_tree_files,
                                    filtered_clone_trees_segments_files,
-                                   low_hypoxia_clone_tree_files,
-                                   low_hypoxia_clone_trees_segments_files,
                                    fig_s03a_unfiltered_plots,
                                    fig_s03a_subset_plots,
-                                   fig_s03a_low_hypoxia_plots,
                                    unfiltered_numbat_expression,
                                    filtered_numbat_expression,
-                                   low_hypoxia_numbat_expression,
                                    unfiltered_numbat_bulk_clones,
                                    filtered_numbat_bulk_clones,
-                                   low_hypoxia_numbat_bulk_clones,
                                    filtering_cell_counts_table = NULL,
                                    cell_depth_sqlite = "batch_hashes.sqlite",
                                    density = 300) {
@@ -664,27 +658,14 @@ collate_sample_summary <- function(ideogram_res_s06a_unfiltered,
   segment_trees_unfiltered  <- unlist(unfiltered_clone_trees_segments_files)
   clone_trees_filtered      <- unlist(filtered_clone_tree_files)
   segment_trees_filtered    <- unlist(filtered_clone_trees_segments_files)
-  clone_trees_low_hypoxia   <- unlist(low_hypoxia_clone_tree_files)
-  segment_trees_low_hypoxia <- unlist(low_hypoxia_clone_trees_segments_files)
 
   clone_trees_unfiltered    <- clone_trees_unfiltered[!is.na(clone_trees_unfiltered) & str_detect(clone_trees_unfiltered, sample_id)]
   segment_trees_unfiltered  <- segment_trees_unfiltered[!is.na(segment_trees_unfiltered) & str_detect(segment_trees_unfiltered, sample_id)]
   clone_trees_filtered      <- clone_trees_filtered[!is.na(clone_trees_filtered) & str_detect(clone_trees_filtered, sample_id)]
   segment_trees_filtered    <- segment_trees_filtered[!is.na(segment_trees_filtered) & str_detect(segment_trees_filtered, sample_id)]
-  clone_trees_low_hypoxia   <- clone_trees_low_hypoxia[!is.na(clone_trees_low_hypoxia) & str_detect(clone_trees_low_hypoxia, sample_id)]
-  segment_trees_low_hypoxia <- segment_trees_low_hypoxia[!is.na(segment_trees_low_hypoxia) & str_detect(segment_trees_low_hypoxia, sample_id)]
 
 
-  # keep unfiltered/filtered/low_hypoxia separate for three-column layout
-  s03a_low_hypoxia <- unlist(fig_s03a_low_hypoxia_plots)
-  s03a_low_hypoxia <- s03a_low_hypoxia[!is.na(s03a_low_hypoxia) & str_detect(s03a_low_hypoxia, sample_id)]
-  if (length(s03a_low_hypoxia) == 0) {
-    cands <- c(
-      file.path("results/numbat_heatmaps", paste0(sample_id, "_low_hypoxia.pdf")),
-      file.path("results/numbat_heatmaps", paste0(sample_id, "_low_hypoxia_scna_var.pdf"))
-    )
-    s03a_low_hypoxia <- cands[file.exists(cands)]
-  }
+  # keep unfiltered/filtered separate for the two-column layout
   s03a_filtered    <- unlist(fig_s03a_subset_plots)
   s03a_filtered    <- s03a_filtered[!is.na(s03a_filtered) & str_detect(s03a_filtered, sample_id)]
   if (length(s03a_filtered) == 0) {
@@ -701,15 +682,11 @@ collate_sample_summary <- function(ideogram_res_s06a_unfiltered,
   expr_unfilt      <- expr_unfilt[!is.na(expr_unfilt) & str_detect(expr_unfilt, sample_id)]
   expr_filtered    <- unlist(filtered_numbat_expression)
   expr_filtered    <- expr_filtered[!is.na(expr_filtered) & str_detect(expr_filtered, sample_id)]
-  expr_low_hypoxia <- unlist(low_hypoxia_numbat_expression)
-  expr_low_hypoxia <- expr_low_hypoxia[!is.na(expr_low_hypoxia) & str_detect(expr_low_hypoxia, sample_id)]
 
   bulk_unfilt      <- unlist(unfiltered_numbat_bulk_clones)
   bulk_unfilt      <- bulk_unfilt[!is.na(bulk_unfilt) & str_detect(bulk_unfilt, sample_id)]
   bulk_filtered    <- unlist(filtered_numbat_bulk_clones)
   bulk_filtered    <- bulk_filtered[!is.na(bulk_filtered) & str_detect(bulk_filtered, sample_id)]
-  bulk_low_hypoxia <- unlist(low_hypoxia_numbat_bulk_clones)
-  bulk_low_hypoxia <- bulk_low_hypoxia[!is.na(bulk_low_hypoxia) & str_detect(bulk_low_hypoxia, sample_id)]
 
   extract_karyogram_path <- function(karyogram_files, sample_id, fallback_suffix = "") {
     if (is.list(karyogram_files) && length(karyogram_files) > 0 &&
@@ -742,14 +719,11 @@ collate_sample_summary <- function(ideogram_res_s06a_unfiltered,
     fallback_suffix = "_filtered"
   )
 
-  karyogram_low_hypoxia <- extract_karyogram_path(
-    ideogram_res_s06a_low_hypoxia,
-    sample_id,
-    fallback_suffix = "_low_hypoxia"
-  )
-
   # Fallback: if no fig_s03a, use numbat heatmaps directly from disk
-  if (length(s03a_low_hypoxia) == 0 && length(s03a_unfilt) == 0) {
+  # Gate was (s03a_low_hypoxia empty AND s03a_unfilt empty); with the low-hypoxia
+  # column gone it keys on the unfiltered column alone, so it fires in strictly
+  # more cases than before. Intended -- unfiltered is the column that matters.
+  if (length(s03a_unfilt) == 0) {
     nb_dir <- glue("results/numbat_sridhar/{sample_id}")
     cands_unfilt <- c(
       glue("{nb_dir}/{sample_id}_unfiltered.pdf"),
@@ -759,13 +733,8 @@ collate_sample_summary <- function(ideogram_res_s06a_unfiltered,
       glue("{nb_dir}/{sample_id}_filtered.pdf"),
       glue("{nb_dir}/{sample_id}_filtered_scna_var.pdf")
     )
-    cands_low_hypoxia <- c(
-      glue("{nb_dir}/{sample_id}_low_hypoxia.pdf"),
-      glue("{nb_dir}/{sample_id}_low_hypoxia_scna_var.pdf")
-    )
     s03a_unfilt      <- cands_unfilt[file.exists(cands_unfilt)]
     s03a_filtered    <- cands_filtered[file.exists(cands_filtered)]
-    s03a_low_hypoxia <- cands_low_hypoxia[file.exists(cands_low_hypoxia)]
   }
 
   # Read one page of a PDF and attach a compact label strip above it.
@@ -849,14 +818,9 @@ collate_sample_summary <- function(ideogram_res_s06a_unfiltered,
     magick::image_append(c(left, right), stack = FALSE)
   }
 
-  has_unfilt_hm <- length(s03a_unfilt) > 0
-  has_filt_hm   <- length(s03a_low_hypoxia) > 0
-  has_karyo     <- file.exists(karyogram_unfiltered) || file.exists(karyogram_low_hypoxia)
-
   # Read per-sample cell counts from filtering_cell_counts_table CSV if available
   n_unfiltered_cells  <- NULL
   n_filtered_cells    <- NULL
-  n_low_hypoxia_cells <- NULL
   csv_path <- unlist(filtering_cell_counts_table)[1]
   if (!is.null(csv_path) && !is.na(csv_path) && file.exists(csv_path)) {
     counts_df <- readr::read_csv(csv_path, show_col_types = FALSE)
@@ -864,7 +828,6 @@ collate_sample_summary <- function(ideogram_res_s06a_unfiltered,
     if (nrow(row) > 0) {
       n_unfiltered_cells  <- row$n_unfiltered[1]
       n_filtered_cells    <- row$n_pipeline_filtered[1]
-      n_low_hypoxia_cells <- row$n_low_hypoxia[1]
     }
   }
 
@@ -880,7 +843,12 @@ collate_sample_summary <- function(ideogram_res_s06a_unfiltered,
                                hm_label,
                                expr_label,
                                bulk_label,
-                               haplo_label = "Haplotype / allele (numbat run; same in all columns)",
+                               # Per-column panel suppression. The expression and
+                               # bulk-clone panels come from the numbat run itself, so
+                               # they are identical in every column; showing them once
+                               # (unfiltered) rather than per column is the point.
+                               show_expr = TRUE,
+                               show_bulk = TRUE,
                                n_cells = NULL) {
 
     # Build middle rows first so we can derive the column width
@@ -899,7 +867,7 @@ collate_sample_summary <- function(ideogram_res_s06a_unfiltered,
 
     row3  <- make_panel_row(hm_paths[1L], hm_label, target_height = 700L)
     row3b <- if (length(hm_paths) >= 2L) make_panel_row(hm_paths[2L], paste0(hm_label, " (SCNA variability)"), target_height = 700L) else NULL
-    row4  <- make_panel_row(expr_paths, expr_label, target_height = 700L)
+    row4  <- if (show_expr) make_panel_row(expr_paths, expr_label, target_height = 700L) else NULL
 
     # Derive column width from middle rows; fall back to a sensible default
     middle_rows <- purrr::compact(list(row2, row3, row3b, row4))
@@ -921,22 +889,14 @@ collate_sample_summary <- function(ideogram_res_s06a_unfiltered,
 
     # Bulk clones: scale to full column width; blank if missing
     existing_bulk <- bulk_paths[file.exists(bulk_paths)]
-    row5 <- if (length(existing_bulk) > 0) {
+    row5 <- if (!show_bulk) {
+      # Suppressed, not blanked: a blank strip would imply the panel is missing.
+      NULL
+    } else if (length(existing_bulk) > 0) {
       img <- annotate_panel(existing_bulk[[1L]], bulk_label)
       magick::image_scale(img, paste0(col_width, "x"))
     } else {
       magick::image_blank(col_width, 700L, color = "white")
-    }
-
-    # Haplotype / allele track = page 2 of the same bulk PDF (#41). Absent for
-    # any panel still rendered by the old single-page path, hence the NULL
-    # check rather than a blank placeholder -- a blank row would imply the
-    # haplotype data is missing when the panel simply predates the change.
-    row5b <- if (length(existing_bulk) > 0) {
-      img <- annotate_panel(existing_bulk[[1L]], haplo_label, page = 2L)
-      if (is.null(img)) NULL else magick::image_scale(img, paste0(col_width, "x"))
-    } else {
-      NULL
     }
 
     count_strip <- if (!is.null(n_cells) && !is.na(n_cells)) {
@@ -946,7 +906,7 @@ collate_sample_summary <- function(ideogram_res_s06a_unfiltered,
         size = 48, color = "black", gravity = "center", weight = 700)
     } else NULL
 
-    col_rows <- purrr::compact(list(count_strip, row1, row2, row3, row3b, row4, row5, row5b))
+    col_rows <- purrr::compact(list(count_strip, row1, row2, row3, row3b, row4, row5))
     if (length(col_rows) == 0) return(NULL)
     make_col(col_rows)
   }
@@ -961,8 +921,8 @@ collate_sample_summary <- function(ideogram_res_s06a_unfiltered,
     "Karyogram (unfiltered)",
     "Unfiltered",
     "Unfiltered fig_s03a",
-    "Expression (numbat run; same in all columns)",
-    "Bulk clones (numbat run; same in all columns)",
+    "Expression (numbat run)",
+    "Bulk clones (numbat run)",
     n_cells = n_unfiltered_cells
   )
 
@@ -976,28 +936,15 @@ collate_sample_summary <- function(ideogram_res_s06a_unfiltered,
     "Karyogram (filtered)",
     "Filtered",
     "Filtered fig_s03a",
-    "Expression (numbat run; same in all columns)",
-    "Bulk clones (numbat run; same in all columns)",
+    "Expression (numbat run)",
+    "Bulk clones (numbat run)",
+    show_expr = FALSE,
+    show_bulk = FALSE,
     n_cells = n_filtered_cells
   )
 
-  low_hypoxia_col <- make_summary_col(
-    karyogram_low_hypoxia,
-    clone_trees_low_hypoxia,
-    segment_trees_low_hypoxia,
-    s03a_low_hypoxia,
-    expr_low_hypoxia,
-    bulk_low_hypoxia,
-    "Karyogram (low hypoxia)",
-    "Low hypoxia",
-    "Low hypoxia fig_s03a",
-    "Expression (numbat run; same in all columns)",
-    "Bulk clones (numbat run; same in all columns)",
-    n_cells = n_low_hypoxia_cells
-  )
-
-  # Combine up to three columns, padding each to the same height first
-  all_cols <- purrr::compact(list(unfilt_col, filtered_col, low_hypoxia_col))
+  # Combine the two columns, padding each to the same height first
+  all_cols <- purrr::compact(list(unfilt_col, filtered_col))
   if (length(all_cols) > 0) {
     max_col_h <- max(vapply(all_cols, function(col) magick::image_info(col)$height[1L], integer(1L)))
     all_cols <- lapply(all_cols, function(col) {
