@@ -13,7 +13,7 @@
 #
 # Layout: one COLUMN per round, three stacked panels per column
 #   1. the fig_s03a-style numbat heatmap  (plot_numbat)
-#   2. the SCNA map                       (plot_numbat_scna_map)
+#   2. the waterfall                      (plot_variability_at_SCNA)
 #   3. numbat's own bulk-clone panel      (bulk_clones_<k>.pdf, already on disk)
 # plus one full-width header row carrying the smoothed-expression heatmap, which
 # numbat writes ONCE per run rather than per round -- it is labelled as such so
@@ -158,7 +158,8 @@ numbat_complete_rounds <- function(sample_dir, max_round = 12L) {
 #' Collate one sample's numbat consensus rounds side by side
 #'
 #' One column per complete consensus round, each stacking the fig_s03a-style
-#' numbat heatmap, the SCNA map and numbat's per-round bulk-clone panel, with the
+#' numbat heatmap, the waterfall (fig_s03a's second page -- P(SCNA) per cell,
+#' faceted by segment) and numbat's per-round bulk-clone panel, with the
 #' round-invariant smoothed-expression heatmap as a full-width header. The round
 #' the sample's `*_numbat.rds` actually holds is marked `[ACTIVE]`, so what the
 #' pipeline currently uses sits next to the alternatives it was chosen over.
@@ -307,7 +308,7 @@ collate_iteration_summary <- function(numbat_rds_file,
       })
 
     hm_path <- NULL
-    map_path <- NULL
+    wf_path <- NULL
     if (!is.null(nb_k)) {
       clone_annot <- if (!is.null(cp) && all(c("cell", "clone_opt") %in% names(cp))) {
         ca <- cp[, c("cell", "clone_opt")]
@@ -333,17 +334,29 @@ collate_iteration_summary <- function(numbat_rds_file,
         # Taller than make_numbat_heatmaps' 10x5: this is the panel the round
         # judgement actually rests on, and at 2:1 it is the shortest row on the
         # page, dwarfed by the SCNA map beneath it.
-        hm_path <- .iter_ggsave(hm[["result"]], width = 10, height = 7)
-      }
+        hm_res  <- hm[["result"]]
+        hm_path <- .iter_ggsave(hm_res, width = 10, height = 7)
 
-      scna_map <- tryCatch(
-        plot_numbat_scna_map(nb_k, title = glue::glue("{sample_id} - round {k} SCNA map")),
-        error = function(e) {
-          warning("plot_numbat_scna_map() failed for ", sample_id, " round ", k, ": ",
-                  conditionMessage(e), call. = FALSE)
-          NULL
-        })
-      map_path <- .iter_ggsave(scna_map, width = 12, height = 9)
+        # The waterfall is fig_s03a's SECOND page: p_cnv for every cell, faceted
+        # by segment, with a clone tile beneath. It is derived from panel 3 of the
+        # heatmap just rendered -- the same recipe make_numbat_heatmaps() uses for
+        # its *_scna_var.pdf -- rather than drawn independently, so it is
+        # guaranteed to describe the same cells and segments as the heatmap it
+        # sits under. That also means it cannot exist when the heatmap fails,
+        # which is why both live in this one branch.
+        if (!is.null(hm_res) && !identical(hm_res, NA_real_) && length(hm_res) >= 3) {
+          wf <- tryCatch(
+            plot_variability_at_SCNA(
+              dplyr::left_join(hm_res[[3]][["data"]], clone_annot, by = "cell"),
+              p_min = p_min),
+            error = function(e) {
+              warning("plot_variability_at_SCNA() failed for ", sample_id, " round ",
+                      k, ": ", conditionMessage(e), call. = FALSE)
+              NULL
+            })
+          wf_path <- .iter_ggsave(wf, width = 12, height = 9)
+        }
+      }
     }
 
     # Free before the next round: joint_post alone runs past 100 MB per round, so
@@ -354,14 +367,15 @@ collate_iteration_summary <- function(numbat_rds_file,
     bulk_path <- pick_panel(sprintf("bulk_clones_%d.pdf", k))
 
     hm_img   <- .iter_panel(hm_path,   lbl,            width = col_width, density = density, size = 30L)
-    map_img  <- .iter_panel(map_path,  "SCNA map",     width = col_width, density = density, size = 26L)
+    wf_img   <- .iter_panel(wf_path,   "Waterfall: P(SCNA) per cell, by segment",
+                            width = col_width, density = density, size = 26L)
     bulk_img <- .iter_panel(bulk_path, "Bulk clones",  width = col_width, density = density, size = 26L)
 
     if (is.null(hm_img))   hm_img   <- .iter_missing(col_width, 500L, paste0(lbl, " -- heatmap not rendered"))
-    if (is.null(map_img))  map_img  <- .iter_missing(col_width, 500L, "SCNA map not rendered")
+    if (is.null(wf_img))   wf_img   <- .iter_missing(col_width, 500L, "waterfall not rendered")
     if (is.null(bulk_img)) bulk_img <- .iter_missing(col_width, 500L, sprintf("bulk_clones_%d not found", k))
 
-    cols[[length(cols) + 1L]] <- .iter_stack(list(hm_img, map_img, bulk_img))
+    cols[[length(cols) + 1L]] <- .iter_stack(list(hm_img, wf_img, bulk_img))
   }
 
   body <- .iter_append(cols)
