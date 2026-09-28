@@ -259,7 +259,10 @@ collate_iteration_summary <- function(numbat_rds_file,
                    error = function(e) NULL)
     if (!is.null(md) && all(c("Run", "Experiment") %in% names(md))) {
       hit <- md$Run[md$Experiment == sample_id]
-      hit <- hit[!is.na(hit) & nzchar(hit)]
+      # The alsf study's rows carry the SRX accession in the Run column rather
+      # than a run accession, so an unguarded lookup labels those six samples
+      # "SRX10831287 / SRX10831287". Only accept a value that is actually an SRR.
+      hit <- hit[!is.na(hit) & nzchar(hit) & grepl("^SRR", hit)]
       if (length(hit) > 0) srr <- hit[[1L]]
     }
   }
