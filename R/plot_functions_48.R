@@ -50,7 +50,21 @@ plot_clone_tree <- function(clone_df, tumor_id, nb_path, clone_simplifications =
     return(NULL)
   }
 
-  mynb <- readRDS(nb_path)
+  # nb_path is normally a path to a *_numbat.rds, but may also be an in-memory
+  # numbat object. The per-round iteration summaries hold a Numbat built at one
+  # specific consensus round, and re-reading the RDS from disk would silently
+  # substitute the SELECTED round's tree for round k's -- the exact class of bug
+  # that made SRX11133593's clone keys wrong.
+  #
+  # R6 objects are environments, so the mut_graph/clone_post assignments below
+  # would mutate the CALLER's object in place. Deep-clone before touching it.
+  mynb <- if (is.character(nb_path)) {
+    readRDS(nb_path)
+  } else if (inherits(nb_path, "R6")) {
+    nb_path$clone(deep = TRUE)
+  } else {
+    nb_path
+  }
 
   # Node count of the FULL numbat tree, captured before the filter below, so the
   # steps that follow can tell a whole-tree plot from a subset one.
@@ -61,7 +75,7 @@ plot_clone_tree <- function(clone_df, tumor_id, nb_path, clone_simplifications =
     tidygraph::as_tbl_graph() %>%
     tidygraph::activate(nodes) %>%
     dplyr::filter(clone %in% unique(clone_df$clone_opt)) %>%
-    as.igraph() %>%
+    igraph::as.igraph() %>%
     identity()
 
   mynb$clone_post <- dplyr::filter(mynb$clone_post, cell %in% clone_df$cell)

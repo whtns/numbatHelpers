@@ -12,9 +12,10 @@
 # choice can be checked by eye instead of assumed.
 #
 # Layout: one COLUMN per round, three stacked panels per column
-#   1. the fig_s03a-style numbat heatmap  (plot_numbat)
-#   2. the waterfall                      (plot_variability_at_SCNA)
-#   3. numbat's own bulk-clone panel      (bulk_clones_<k>.pdf, already on disk)
+#   1. the clone tree with segment labels (plot_clone_tree, no simplification)
+#   2. the fig_s03a-style numbat heatmap  (plot_numbat)
+#   3. the waterfall                      (plot_variability_at_SCNA)
+#   4. numbat's own bulk-clone panel      (bulk_clones_<k>.pdf, already on disk)
 # plus one full-width header row carrying the smoothed-expression heatmap, which
 # numbat writes ONCE per run rather than per round -- it is labelled as such so
 # the reader does not take it for a per-round panel.
@@ -144,13 +145,19 @@ numbat_complete_rounds <- function(sample_dir, max_round = 12L) {
 }
 
 # Render a ggplot to a temporary PDF, returning NULL rather than erroring.
-.iter_ggsave <- function(plot_obj, width, height) {
+.iter_ggsave <- function(plot_obj, width, height, what = "panel") {
   if (is.null(plot_obj) || identical(plot_obj, NA_real_)) return(NULL)
   path <- tempfile(fileext = ".pdf")
   ok <- tryCatch({
     ggplot2::ggsave(path, plot = plot_obj, width = width, height = height, limitsize = FALSE)
     TRUE
-  }, error = function(e) FALSE)
+  }, error = function(e) {
+    # Never swallow this. A silent NULL here is indistinguishable from "the
+    # panel was not requested", and that is how an unqualified as.igraph() in
+    # plot_clone_tree() showed up as a grey box with no explanation anywhere.
+    warning("ggsave failed for ", what, ": ", conditionMessage(e), call. = FALSE)
+    FALSE
+  })
   if (!ok || !file.exists(path)) NULL else path
 }
 
@@ -158,8 +165,9 @@ numbat_complete_rounds <- function(sample_dir, max_round = 12L) {
 #' Collate one sample's numbat consensus rounds side by side
 #'
 #' One column per complete consensus round, each stacking the fig_s03a-style
-#' numbat heatmap, the waterfall (fig_s03a's second page -- P(SCNA) per cell,
-#' faceted by segment) and numbat's per-round bulk-clone panel, with the
+#' clone tree with segment labels, the numbat heatmap, the waterfall (fig_s03a's
+#' second page -- P(SCNA) per cell, faceted by segment) and numbat's per-round
+#' bulk-clone panel, with the
 #' round-invariant smoothed-expression heatmap as a full-width header. The round
 #' the sample's `*_numbat.rds` actually holds is marked `[ACTIVE]`, so what the
 #' pipeline currently uses sits next to the alternatives it was chosen over.
@@ -183,6 +191,10 @@ numbat_complete_rounds <- function(sample_dir, max_round = 12L) {
 #' @param eligible_priority Which `best_priority` values count as eligible.
 #' @param active_round_csv Table of the round each object holds, used only for the
 #'   `[ACTIVE]` mark.
+#' @param metadata_tsv SRA table used to decode the sample's SRR run accession
+#'   from its SRX (`Run` and `Experiment` columns). The cohort is keyed by SRX,
+#'   but the thesis-era work is referred to by SRR, so both are put on the page.
+#'   Pass `NULL` to omit the SRR label.
 #' @param out_dir Where the PDF is written. Must not be under `output/`.
 #' @param p_min,line_width Passed to `plot_numbat()`; the defaults match the
 #'   `numbat_heatmap_plots_*` targets so the panels are comparable.
@@ -200,6 +212,7 @@ collate_iteration_summary <- function(numbat_rds_file,
                                       eligible_samples_csv = "results/diploid_audit/rb_scna_triage_samples.csv",
                                       eligible_priority = "P1_sufficient",
                                       active_round_csv = "results/numbat_active_round.csv",
+                                      metadata_tsv = "data/metadata.tsv",
                                       out_dir = "results/iteration_summaries",
                                       p_min = 0.9,
                                       line_width = 0.1,
@@ -232,6 +245,25 @@ collate_iteration_summary <- function(numbat_rds_file,
       }
     }
   }
+
+  # SRR run accession for the page title. The cohort is keyed by SRX while the
+  # thesis-era analyses are referred to by SRR, so carrying both makes the two
+  # bodies of work line up without a lookup. metadata.tsv is a clean 1:1 map
+  # (57 pairs, no SRX with multiple runs); SRX10031194 is absent from it, and
+  # that sample simply gets no SRR shown rather than a guess.
+  srr <- NA_character_
+  if (!is.null(metadata_tsv) && !is.na(metadata_tsv) && nzchar(metadata_tsv) &&
+      file.exists(metadata_tsv)) {
+    md <- tryCatch(utils::read.delim(metadata_tsv, check.names = FALSE,
+                                     stringsAsFactors = FALSE),
+                   error = function(e) NULL)
+    if (!is.null(md) && all(c("Run", "Experiment") %in% names(md))) {
+      hit <- md$Run[md$Experiment == sample_id]
+      hit <- hit[!is.na(hit) & nzchar(hit)]
+      if (length(hit) > 0) srr <- hit[[1L]]
+    }
+  }
+  sample_label <- if (is.na(srr)) sample_id else paste0(sample_id, " / ", srr)
 
   sample_dir <- sub("_numbat\\.rds$", "", rds)
   ks <- numbat_complete_rounds(sample_dir, max_round = max_round)
@@ -309,6 +341,7 @@ collate_iteration_summary <- function(numbat_rds_file,
 
     hm_path <- NULL
     wf_path <- NULL
+    ct_path <- NULL
     if (!is.null(nb_k)) {
       clone_annot <- if (!is.null(cp) && all(c("cell", "clone_opt") %in% names(cp))) {
         ca <- cp[, c("cell", "clone_opt")]
@@ -335,7 +368,8 @@ collate_iteration_summary <- function(numbat_rds_file,
         # judgement actually rests on, and at 2:1 it is the shortest row on the
         # page, dwarfed by the SCNA map beneath it.
         hm_res  <- hm[["result"]]
-        hm_path <- .iter_ggsave(hm_res, width = 10, height = 7)
+        hm_path <- .iter_ggsave(hm_res, width = 10, height = 7,
+                                what = paste0(sample_id, " round ", k, " heatmap"))
 
         # The waterfall is fig_s03a's SECOND page: p_cnv for every cell, faceted
         # by segment, with a clone tile beneath. It is derived from panel 3 of the
@@ -354,8 +388,40 @@ collate_iteration_summary <- function(numbat_rds_file,
                       k, ": ", conditionMessage(e), call. = FALSE)
               NULL
             })
-          wf_path <- .iter_ggsave(wf, width = 12, height = 9)
+          wf_path <- .iter_ggsave(wf, width = 12, height = 9,
+                                  what = paste0(sample_id, " round ", k, " waterfall"))
         }
+
+        # Clone tree carrying numbat's RAW segment labels. clone_simplifications
+        # = NULL is what makes it the segment-labelled tree: with a
+        # simplification dict the edges would read as curated SCNA names
+        # ("1q+") instead of the segments that actually define each clone. This
+        # is the same call the *_segment_tree.pdf targets make
+        # (plot_functions_19.R:1165).
+        #
+        # clone_df is round k's OWN clone_post, not the Seurat object's
+        # clone_opt -- the Seurat objects carry only the selected round, so
+        # using them would draw the same tree in all four columns.
+        ct <- tryCatch(
+          plot_clone_tree(
+            clone_df             = clone_annot,
+            tumor_id             = sample_id,
+            nb_path              = nb_k,
+            clone_simplifications = NULL,
+            # plot_clone_tree() uses sample_id for the panel caption ONLY
+            # (plot_functions_48.R: plot_title), so this puts SRX / SRR on every
+            # tree, not just the page title. tumor_id stays the bare SRX because
+            # that is what the simplification dict would be keyed by.
+            sample_id            = sample_label,
+            legend               = FALSE,
+            horizontal           = FALSE),
+          error = function(e) {
+            warning("plot_clone_tree() failed for ", sample_id, " round ", k, ": ",
+                    conditionMessage(e), call. = FALSE)
+            NULL
+          })
+        ct_path <- .iter_ggsave(ct, width = 6, height = 6,
+                                what = paste0(sample_id, " round ", k, " clone tree"))
       }
     }
 
@@ -366,16 +432,18 @@ collate_iteration_summary <- function(numbat_rds_file,
 
     bulk_path <- pick_panel(sprintf("bulk_clones_%d.pdf", k))
 
-    hm_img   <- .iter_panel(hm_path,   lbl,            width = col_width, density = density, size = 30L)
+    ct_img   <- .iter_panel(ct_path,   lbl,            width = col_width, density = density, size = 30L)
+    hm_img   <- .iter_panel(hm_path,   "Heatmap",      width = col_width, density = density, size = 26L)
     wf_img   <- .iter_panel(wf_path,   "Waterfall: P(SCNA) per cell, by segment",
                             width = col_width, density = density, size = 26L)
     bulk_img <- .iter_panel(bulk_path, "Bulk clones",  width = col_width, density = density, size = 26L)
 
-    if (is.null(hm_img))   hm_img   <- .iter_missing(col_width, 500L, paste0(lbl, " -- heatmap not rendered"))
+    if (is.null(ct_img))   ct_img   <- .iter_missing(col_width, 500L, paste0(lbl, " -- clone tree not rendered"))
+    if (is.null(hm_img))   hm_img   <- .iter_missing(col_width, 500L, "heatmap not rendered")
     if (is.null(wf_img))   wf_img   <- .iter_missing(col_width, 500L, "waterfall not rendered")
     if (is.null(bulk_img)) bulk_img <- .iter_missing(col_width, 500L, sprintf("bulk_clones_%d not found", k))
 
-    cols[[length(cols) + 1L]] <- .iter_stack(list(hm_img, wf_img, bulk_img))
+    cols[[length(cols) + 1L]] <- .iter_stack(list(ct_img, hm_img, wf_img, bulk_img))
   }
 
   body <- .iter_append(cols)
@@ -410,7 +478,7 @@ collate_iteration_summary <- function(numbat_rds_file,
   out_img <- do.call(c, rows) |> magick::image_append(stack = TRUE)
 
   title <- sprintf("%s  --  numbat consensus rounds %s%s",
-                   sample_id, paste(ks, collapse = ", "),
+                   sample_label, paste(ks, collapse = ", "),
                    if (is.na(active_k)) "" else sprintf("  (object holds round %d)", active_k))
   info <- magick::image_info(out_img)[1L, ]
   title_h <- max(80L, as.integer(round(info$height * 0.02)))
