@@ -15,7 +15,19 @@
 #   1. the clone tree with segment labels (plot_clone_tree, no simplification)
 #   2. the fig_s03a-style numbat heatmap  (plot_numbat)
 #   3. the waterfall                      (plot_variability_at_SCNA)
-#   4. numbat's own bulk-clone panel      (bulk_clones_<k>.pdf, already on disk)
+#   4. numbat's own bulk-clone panel      (already on disk; see below for WHICH)
+#
+# The bulk-clone panel is off by one round, and it is not a typo. Within
+# iteration k numbat pseudobulks the clones it inherited from the PREVIOUS
+# iteration's phylogeny, then rebuilds the phylogeny afterwards -- so
+# `bulk_clones_<k>.tsv.gz` carries round k's SEGMENTS but round k-1's clone
+# MEMBERSHIP, and its `n_cells` matches `clone_post_<k-1>.tsv` exactly (verified
+# across the cohort). `bulk_clones_final` is the one computed after the last
+# iteration, so it is the panel that matches the final round. Hence round k's
+# column takes `bulk_clones_<k+1>`, and the last round takes `bulk_clones_final`.
+# Pairing round k with `bulk_clones_<k>` -- the obvious reading -- shows a
+# different clone count and a different colouring than the column's own heatmap
+# and clone tree.
 # plus one full-width header row carrying the smoothed-expression heatmap, which
 # numbat writes ONCE per run rather than per round -- it is labelled as such so
 # the reader does not take it for a per-round panel.
@@ -182,8 +194,10 @@ numbat_complete_rounds <- function(sample_dir, max_round = 12L) {
 #'   loaded from the run directory instead.
 #' @param numbat_plot_pdfs Converted numbat PDFs for this sample, i.e. one branch
 #'   of `large_numbat_pdfs` (`convert_numbat_pngs()` output). Supplies the
-#'   per-round `bulk_clones_<k>.pdf` and the `exp_roll_clust.pdf` header. When
-#'   absent, the raw PNGs in the run directory are used instead.
+#'   per-round bulk-clone panels and the `exp_roll_clust.pdf` header. When
+#'   absent, the raw PNGs in the run directory are used instead. Note round k's
+#'   panel is `bulk_clones_<k+1>.pdf` (`bulk_clones_final.pdf` for the last
+#'   round), not `bulk_clones_<k>.pdf` -- see the note at the top of this file.
 #' @param eligible_samples_csv Triage table; samples whose `best_priority` is not
 #'   in `eligible_priority` return `NULL`. Read from the table rather than
 #'   hardcoded so the scope follows the triage when it is rerun. Pass `NULL` to
@@ -433,18 +447,29 @@ collate_iteration_summary <- function(numbat_rds_file,
     rm(nb_k, segs, cp)
     gc(verbose = FALSE)
 
-    bulk_path <- pick_panel(sprintf("bulk_clones_%d.pdf", k))
+    # Round k's clones are pseudobulked at the START of iteration k+1, so the
+    # panel that matches this column's heatmap and clone tree is
+    # bulk_clones_<k+1> -- or bulk_clones_final for the last round, which is
+    # computed after the loop ends. See the note at the top of this file.
+    bulk_src  <- sprintf("bulk_clones_%d", k + 1L)
+    bulk_path <- pick_panel(paste0(bulk_src, ".pdf"))
+    if (is.na(bulk_path)) {
+      bulk_src  <- "bulk_clones_final"
+      bulk_path <- pick_panel("bulk_clones_final.pdf")
+    }
 
     ct_img   <- .iter_panel(ct_path,   lbl,            width = col_width, density = density, size = 30L)
     hm_img   <- .iter_panel(hm_path,   "Heatmap",      width = col_width, density = density, size = 26L)
     wf_img   <- .iter_panel(wf_path,   "Waterfall: P(SCNA) per cell, by segment",
                             width = col_width, density = density, size = 26L)
-    bulk_img <- .iter_panel(bulk_path, "Bulk clones",  width = col_width, density = density, size = 26L)
+    bulk_img <- .iter_panel(bulk_path,
+                            sprintf("Bulk clones: round %d membership (numbat's %s)", k, bulk_src),
+                            width = col_width, density = density, size = 26L)
 
     if (is.null(ct_img))   ct_img   <- .iter_missing(col_width, 500L, paste0(lbl, " -- clone tree not rendered"))
     if (is.null(hm_img))   hm_img   <- .iter_missing(col_width, 500L, "heatmap not rendered")
     if (is.null(wf_img))   wf_img   <- .iter_missing(col_width, 500L, "waterfall not rendered")
-    if (is.null(bulk_img)) bulk_img <- .iter_missing(col_width, 500L, sprintf("bulk_clones_%d not found", k))
+    if (is.null(bulk_img)) bulk_img <- .iter_missing(col_width, 500L, paste0(bulk_src, " not found"))
 
     cols[[length(cols) + 1L]] <- .iter_stack(list(ct_img, hm_img, wf_img, bulk_img))
   }
