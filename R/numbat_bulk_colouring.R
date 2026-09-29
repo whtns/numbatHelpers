@@ -22,6 +22,25 @@
 #                 own pseudobulk is too weak to call them; segments `geno`
 #                 dropped as not tree-informative are never coloured.
 #
+# THE CLONAL-LOH OVERRIDE
+# -----------------------
+# plot_psbulk() forces state_post = 'del' wherever the `loh` column is TRUE
+# (vis.R:88-90), AFTER any recolouring -- numbat's marking of clonal-LOH
+# regions detected upfront (segs_loh). It paints those segments blue in every
+# clone, which defeats a per-clone colouring.
+#
+# Audited over all 39 run directories: 286 flagged (sample, round, bulk,
+# segment) records on 28 samples. The consensus state underneath the flag is
+# `del` 215 times, `neu` 62, `bamp` 2, and `loh` only 7 -- and all 7 of those
+# are carried by ZERO clones (SRX10264522 16a, SRX11133593 13a), so the flag is
+# not protecting any CNLoH call that the genotype would otherwise show. Every
+# one of the cohort's 170 clone-specific CNLoH segments lies outside it.
+#
+# So `suppress_clonal_loh = TRUE` clears the flag before plotting. Of the
+# flagged non-loh records, 185 become clone-specific and 93 go grey -- among
+# them SRX10264524's 13b, which geno had already dropped at LLR 7.7 over 34
+# genes and which remains visible in the heatmap and waterfall.
+#
 # See docs/numbat_per_clone_retest.md for the measured differences.
 #
 # ROUND ALIGNMENT -- the trap in all of this
@@ -99,9 +118,13 @@ numbat_clone_intervals <- function(segs, clone_post) {
 #' @param clone_post The matching `clone_post`, carrying `clone_opt`/`GT_opt`.
 #' @param min_overlap Fraction of a bulk segment that must fall inside a carried
 #'   interval for it to be coloured.
+#' @param suppress_clonal_loh Clear the `loh` column so `plot_psbulk()` cannot
+#'   override the genotype colouring with its clonal-LOH marking. See the note
+#'   at the top of this file; `FALSE` restores numbat's behaviour.
 #' @return `bulk`, recoloured. Unchanged if the inputs are unusable.
 #' @export
-numbat_clone_geno_bulk <- function(bulk, segs, clone_post, min_overlap = 0.5) {
+numbat_clone_geno_bulk <- function(bulk, segs, clone_post, min_overlap = 0.5,
+                                   suppress_clonal_loh = TRUE) {
 
   if (!is.data.frame(bulk)) return(bulk)
   if (!all(c("seg_cons", "CHROM", "POS", "sample") %in% names(bulk))) return(bulk)
@@ -151,7 +174,8 @@ numbat_clone_geno_bulk <- function(bulk, segs, clone_post, min_overlap = 0.5) {
       state_post     = ifelse(geno_state == "neu", "neu", state_post),
       cnv_state_post = geno_state,
       cnv_state      = geno_state) |>
-    dplyr::select(-geno_state, -.clone, -.chrom)
+    dplyr::select(-geno_state, -.clone, -.chrom) |>
+    numbat_clear_clonal_loh(suppress_clonal_loh)
 }
 
 #' Colour a pseudobulk table by the consensus segment states
@@ -164,9 +188,10 @@ numbat_clone_geno_bulk <- function(bulk, segs, clone_post, min_overlap = 0.5) {
 #' @param bulk A `bulk_clones` table carrying `seg_cons`.
 #' @param segs The `segs_consensus` table for the round `bulk` was retested
 #'   against: `bulk_clones_<k>` goes with `segs_consensus_<k>`.
+#' @param suppress_clonal_loh As in `numbat_clone_geno_bulk()`.
 #' @return `bulk`, recoloured.
 #' @export
-numbat_consensus_bulk <- function(bulk, segs) {
+numbat_consensus_bulk <- function(bulk, segs, suppress_clonal_loh = TRUE) {
 
   if (!is.data.frame(bulk) || !is.data.frame(segs)) return(bulk)
   if (!"seg_cons" %in% names(bulk) || !"seg_cons" %in% names(segs)) return(bulk)
@@ -188,5 +213,24 @@ numbat_consensus_bulk <- function(bulk, segs) {
       state_post     = ifelse(cons_state == "neu", "neu", state_post),
       cnv_state_post = cons_state,
       cnv_state      = cons_state) |>
-    dplyr::select(-cons_state)
+    dplyr::select(-cons_state) |>
+    numbat_clear_clonal_loh(suppress_clonal_loh)
+}
+
+
+#' Clear numbat's clonal-LOH flag so it cannot override a recolouring
+#'
+#' `plot_psbulk()` guards on `'loh' %in% colnames(bulk)`, so setting the column
+#' to `FALSE` is enough -- the column is kept rather than dropped, since other
+#' numbat code reads it.
+#'
+#' @param bulk A pseudobulk table.
+#' @param suppress `FALSE` returns `bulk` untouched.
+#' @return `bulk`, with `loh` set to `FALSE` if present.
+#' @keywords internal
+numbat_clear_clonal_loh <- function(bulk, suppress = TRUE) {
+  if (!isTRUE(suppress)) return(bulk)
+  if (!is.data.frame(bulk) || !"loh" %in% names(bulk)) return(bulk)
+  bulk$loh <- FALSE
+  bulk
 }
