@@ -451,11 +451,60 @@ collate_iteration_summary <- function(numbat_rds_file,
     # panel that matches this column's heatmap and clone tree is
     # bulk_clones_<k+1> -- or bulk_clones_final for the last round, which is
     # computed after the loop ends. See the note at the top of this file.
-    bulk_src  <- sprintf("bulk_clones_%d", k + 1L)
-    bulk_path <- pick_panel(paste0(bulk_src, ".pdf"))
-    if (is.na(bulk_path)) {
-      bulk_src  <- "bulk_clones_final"
-      bulk_path <- pick_panel("bulk_clones_final.pdf")
+    #
+    # Rendered here rather than read off disk: numbat's own PNG colours by each
+    # clone's RETEST, which shows a strict subset of the consensus segments and
+    # makes a different claim than the clone tree at the top of this column.
+    #
+    # Colouring is per clone, by round k's phylogeny genotype (GT_opt in
+    # clone_post_<k>), so this panel and the clone tree at the top of the column
+    # make the same claim about which clone carries what.
+    #
+    # The bulk table's seg_cons letters belong to round k+1 while GT_opt names
+    # round k's, and segment letters are round-specific -- so nothing joins on
+    # the letter: numbat_clone_geno_bulk() resolves GT_opt to genomic intervals
+    # via segs_consensus_<k> and matches them against the bulk table's own
+    # segment extents.
+    bulk_src <- sprintf("bulk_clones_%d", k + 1L)
+    bulk_tsv <- file.path(sample_dir, paste0(bulk_src, ".tsv.gz"))
+    if (!file.exists(bulk_tsv)) {
+      bulk_src <- "bulk_clones_final"
+      bulk_tsv <- file.path(sample_dir, "bulk_clones_final.tsv.gz")
+    }
+    segs_tsv <- file.path(sample_dir, sprintf("segs_consensus_%d.tsv", k))
+    cp_tsv   <- file.path(sample_dir, sprintf("clone_post_%d.tsv", k))
+
+    bulk_path <- NULL
+    if (file.exists(bulk_tsv) && file.exists(segs_tsv) && file.exists(cp_tsv)) {
+      # plot_psbulk() resolves gaps_hg38/acen_hg38 as BARE symbols, which live
+      # in numbat's LazyData and are reachable only once it is ATTACHED --
+      # importing the namespace is not enough. Same trap as numbat_bulk_panel.R.
+      if (!"package:numbat" %in% search()) {
+        suppressPackageStartupMessages(
+          library(numbat, quietly = TRUE, warn.conflicts = FALSE))
+      }
+      n_grp <- 1L
+      bp <- tryCatch({
+        bk <- as.data.frame(data.table::fread(bulk_tsv, showProgress = FALSE))
+        sg <- as.data.frame(data.table::fread(segs_tsv, showProgress = FALSE))
+        cpk <- as.data.frame(data.table::fread(cp_tsv, showProgress = FALSE))
+        # tryCatch evaluates expr in this frame, so a plain <- lands here;
+        # <<- would skip past it into the package namespace.
+        n_grp <- if ("sample" %in% names(bk)) length(unique(bk$sample)) else 1L
+        # min_LLR = 0 is required, not cosmetic: plot_psbulk() would otherwise
+        # re-apply its floor to the PER-CLONE LLR and neutralise the genotype
+        # colouring just applied.
+        numbat::plot_bulks(numbat_clone_geno_bulk(bk, sg, cpk),
+                           ncol = 1, title = TRUE, min_LLR = 0)
+      }, error = function(e) {
+        warning("bulk panel failed for ", sample_id, " round ", k, " (",
+                bulk_src, "): ", conditionMessage(e), call. = FALSE)
+        NULL
+      })
+      bulk_path <- .iter_ggsave(bp, width = 13, height = max(4, 2 * n_grp),
+                                what = paste0(sample_id, " round ", k, " bulk clones"))
+      rm(bp)
+      gc(verbose = FALSE)
     }
 
     ct_img   <- .iter_panel(ct_path,   lbl,            width = col_width, density = density, size = 30L)
@@ -463,7 +512,8 @@ collate_iteration_summary <- function(numbat_rds_file,
     wf_img   <- .iter_panel(wf_path,   "Waterfall: P(SCNA) per cell, by segment",
                             width = col_width, density = density, size = 26L)
     bulk_img <- .iter_panel(bulk_path,
-                            sprintf("Bulk clones: round %d membership (numbat's %s)", k, bulk_src),
+                            sprintf("Bulk clones: round %d membership (%s), coloured by round %d clone genotype",
+                                    k, bulk_src, k),
                             width = col_width, density = density, size = 26L)
 
     if (is.null(ct_img))   ct_img   <- .iter_missing(col_width, 500L, paste0(lbl, " -- clone tree not rendered"))
