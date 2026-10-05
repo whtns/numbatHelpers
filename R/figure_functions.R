@@ -590,6 +590,21 @@ plot_fig_02 <- function(seu_path, numbat_rds_files, large_clone_simplifications,
 	seu$clusters <- seu$seurat_clusters
 	seu$clusters <- factor(seu$clusters)
 
+	# The hypoxia-split objects carry clone_opt/GT_opt but an empty scna column;
+	# derive scna from GT_opt + clone simplifications (as in plot_functions_22.R)
+	if (all(is.na(seu$scna) | seu$scna == "")) {
+		rb_scnas_lookup <- tibble::enframe(large_clone_simplifications[[sample_id]], "scna", "seg") %>%
+			tidyr::unnest(seg) %>%
+			dplyr::mutate(seg = as.character(seg))
+		scna_labels <- vapply(seu$GT_opt, function(gt_opt) {
+			if (is.na(gt_opt) || gt_opt == "") return("diploid")
+			wrapped <- wrap_scna_labels(simplify_gt_col(gt_opt, rb_scnas_lookup))
+			if (length(wrapped) == 0 || is.na(wrapped[[1]]) || wrapped[[1]] == "") gt_opt else as.character(wrapped[[1]])
+		}, FUN.VALUE = character(1))
+		clone_order <- tapply(as.numeric(as.character(seu$clone_opt)), scna_labels, min)
+		seu$scna <- factor(scna_labels, levels = names(sort(clone_order)))
+	}
+
 	cc_data <- FetchData(seu, c("clusters", "G2M.Score", "S.Score", "Phase", "scna"))
 
 	centroid_data <- cc_data %>%
@@ -610,9 +625,10 @@ plot_fig_02 <- function(seu_path, numbat_rds_files, large_clone_simplifications,
 	# Panel C: 3 UMAP plots
 	panel_c <- (DimPlot(seu, group.by = "clusters", label = TRUE) + NoLegend()) |
 	           DimPlot(seu, group.by = "Phase") |
-	           DimPlot(seu, group.by = "scna")
+	           (DimPlot(seu, group.by = "scna") + labs(title = "Subclone"))
 
 	# Panel D: CC space scatter x3 (clusters, Phase, scna) — same dimensions as panel C (2996x1498)
+	panel_titles <- c(clusters = "clusters", Phase = "Phase", scna = "Subclone")
 	make_cc_scatter <- function(color_by, show_fill_legend = TRUE) {
 		p <- cc_data %>%
 			ggplot(aes(x = S.Score, y = G2M.Score, color = .data[[color_by]])) +
@@ -623,7 +639,7 @@ plot_fig_02 <- function(seu_path, numbat_rds_files, large_clone_simplifications,
 				size = 6, shape = 23, colour = "black", alpha = 0.7, inherit.aes = FALSE
 			) +
 			theme_light() +
-			labs(title = color_by)
+			labs(title = panel_titles[[color_by]], color = panel_titles[[color_by]])
 		if (!show_fill_legend) p <- p + guides(fill = "none")
 		p
 	}
