@@ -4,12 +4,21 @@ integration_by_scna_clones <- function(seu_paths, scna_of_interest = "1q", clone
 		set_names(str_extract, "SR[RX][0-9]+")
 	
 	seus <- seus |> 
-		map(readRDS)
+		map(readRDS) |>
+		imap(add_scna_labels)
 
 	seus <- imap(seus,
 		subset_seu_by_clones, scna_of_interest = scna_of_interest, clone_comparisons = clone_comparisons, ...)
-	
-	integrated_seu <- seuratTools::integration_workflow(seus)
+
+	# per-sample clusterings mean nothing after integration, and samples carry different
+	# resolution sets (0.2-0.6 vs 0.2-2.0), so the merged columns are partly NA and break
+	# seuratTools' presto marker step; the integrated object is reclustered below
+	seus <- map(seus, function(seu) {
+		seu@meta.data <- seu@meta.data[, !grepl("_snn_res\\.", colnames(seu@meta.data)), drop = FALSE]
+		seu
+	})
+
+	integrated_seu <- seuratTools::integration_workflow(seus, find_markers = FALSE)
 
 	seu_path <- tempfile(pattern = paste0("integrated_", scna_of_interest, "_"), tmpdir = "output/seurat", fileext = "_filtered_seu.rds")
 
@@ -24,7 +33,7 @@ integration_by_scna_clones <- function(seu_paths, scna_of_interest = "1q", clone
 		"16q" = "16q-")[scna_of_interest]
 
 	# integrated_seu$scna <- 
-	integrated_seu$scna <- factor(ifelse(str_detect(integrated_seu$scna, pattern = scna_string), "w_scna", "wo_scna"), levels = c("wo_scna", "w_scna"))
+	integrated_seu$scna <- factor(ifelse(scna_label_has(integrated_seu$scna, scna_string), "w_scna", "wo_scna"), levels = c("wo_scna", "w_scna"))
 	
 	seus <- integrated_seu  |> 
 	SplitObject(split.by = "batch")
@@ -41,10 +50,13 @@ integration_by_scna_clones <- function(seu_paths, scna_of_interest = "1q", clone
 }
 
 subset_seu_by_clones <- function(seu, sample_id, scna_of_interest = "1q", clone_comparisons, filter_expr = NULL){
-		clone_comparisons <- names(clone_comparisons[[sample_id]])
-		retained_clones <- clone_comparisons |>
-			str_extract("[0-9]_v_[0-9]") |>
-			str_split("_v_", simplify = TRUE)
+		# only the comparisons for this SCNA; "_6p" cannot match "_16p"
+		clone_comparisons <- names(clone_comparisons[[sample_id]]) |>
+			str_subset(fixed(paste0("_", scna_of_interest)))
+		if (length(clone_comparisons) == 0) {
+			stop("no ", scna_of_interest, " comparison for ", sample_id, " in clone_comparisons")
+		}
+		retained_clones <- str_match(clone_comparisons, "^([0-9]+)_v_([0-9]+)")[, 2:3, drop = FALSE]
 
 		mode(retained_clones) <- "integer"
 
