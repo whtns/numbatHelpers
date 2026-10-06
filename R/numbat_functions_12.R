@@ -156,7 +156,7 @@ annotate_cell_cycle_without_1q <- function(seu, organism = "human", ...) {
   }
   seu <- CellCycleScoring(seu,
     s.features = s_genes, g2m.features = g2m_genes,
-    set.ident = FALSE
+    set.ident = FALSE, ...
   )
 }
 

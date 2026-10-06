@@ -469,7 +469,7 @@ plot_fig_01 <- function(seu_path, plot_path = "results/fig_01.pdf") {
 	seu <- readRDS(seu_path)
 	seu$scna <- factor(seu$scna, levels = c("", "16q-", "16q- 1q+"))
 	seu$scna_status <- factor(
-		ifelse(str_detect(seu$scna, "1q"), "w/ 1q+", "w/o 1q+"),
+		ifelse(scna_label_has(seu$scna, "1q"), "w/ 1q+", "w/o 1q+"),
 		levels = c("w/o 1q+", "w/ 1q+")
 	)
 	seu$clusters <- seu$seurat_clusters
@@ -557,7 +557,10 @@ plot_fig_01 <- function(seu_path, plot_path = "results/fig_01.pdf") {
 	qpdf::pdf_combine(c(path_d, path_e, path_f), plot_path)
 }
 
-plot_fig_02 <- function(seu_path, numbat_rds_files, large_clone_simplifications, plot_path = NULL) {
+# clone_labels_hash: the clone_labels_sqlite target's value. Unused here except to make
+# targets rebuild the figure when the stored subclone labels change.
+plot_fig_02 <- function(seu_path, numbat_rds_files, large_clone_simplifications, plot_path = NULL,
+                        clone_labels_hash = NULL, sqlite_path = "batch_hashes.sqlite") {
 	if (is.na(seu_path)) return(NA_character_)
 
 	sample_id <- stringr::str_extract(seu_path, "SR[RX][0-9]+")
@@ -587,23 +590,31 @@ plot_fig_02 <- function(seu_path, numbat_rds_files, large_clone_simplifications,
 
 	# Load Seurat for panels C-F
 	seu <- readRDS(seu_path)
+	# Filtered objects get Phase/S.Score from filtered_seus_with_phase, which writes in
+	# place and is not always rerun; score in memory rather than modify the object.
+	if (!all(c("S.Score", "G2M.Score", "Phase") %in% colnames(seu@meta.data))) {
+		# AddModuleScore bins genes by mean expression (nbin = 24). When many genes tie
+		# at the same mean (SCT data: one count in one cell gives the same value in any
+		# cell), cut_number cannot make 24 bins (SRX22868105); fall back to fewer.
+		for (nbin in c(24, 12, 6)) {
+			scored <- tryCatch(annotate_cell_cycle_without_1q(seu, organism = "human", nbin = nbin),
+							   error = function(e) NULL)
+			if (!is.null(scored)) break
+		}
+		if (is.null(scored)) stop("cell-cycle scoring failed at nbin 24, 12 and 6")
+		if (nbin != 24) message("cell-cycle scoring used nbin = ", nbin)
+		seu <- scored
+	}
 	seu$clusters <- seu$seurat_clusters
 	seu$clusters <- factor(seu$clusters)
 
-	# The hypoxia-split objects carry clone_opt/GT_opt but an empty scna column;
-	# derive scna from GT_opt + clone simplifications (as in plot_functions_22.R)
-	if (all(is.na(seu$scna) | seu$scna == "")) {
-		rb_scnas_lookup <- tibble::enframe(large_clone_simplifications[[sample_id]], "scna", "seg") %>%
-			tidyr::unnest(seg) %>%
-			dplyr::mutate(seg = as.character(seg))
-		scna_labels <- vapply(seu$GT_opt, function(gt_opt) {
-			if (is.na(gt_opt) || gt_opt == "") return("diploid")
-			wrapped <- wrap_scna_labels(simplify_gt_col(gt_opt, rb_scnas_lookup))
-			if (length(wrapped) == 0 || is.na(wrapped[[1]]) || wrapped[[1]] == "") gt_opt else as.character(wrapped[[1]])
-		}, FUN.VALUE = character(1))
-		clone_order <- tapply(as.numeric(as.character(seu$clone_opt)), scna_labels, min)
-		seu$scna <- factor(scna_labels, levels = names(sort(clone_order)))
-	}
+	# Subclone labels come from the clone_labels table (written by the
+	# clone_labels_sqlite target from large_clone_simplifications.yaml), not from the
+	# object, whose scna column is empty. Every segment is labelled, so labels can
+	# list ten or more events: wrap at 30 characters (wrap_scna_labels() breaks at 10,
+	# which runs the legends off the page for samples like SRX10264523).
+	seu <- add_scna_labels(seu, sample_id, diploid_label = "diploid", sqlite_path = sqlite_path)
+	seu$scna <- forcats::fct_relabel(seu$scna, stringr::str_wrap, width = 30)
 
 	cc_data <- FetchData(seu, c("clusters", "G2M.Score", "S.Score", "Phase", "scna"))
 

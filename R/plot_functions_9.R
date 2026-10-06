@@ -33,7 +33,7 @@ plot_merged_heatmap <- function(seu_path = "output/seurat/merged_1q_filtered_seu
 
   scna_status <- glue("status of {myscna}")
 
-  seu0[[scna_status]] <- str_detect(seu0$scna, myscna)
+  seu0[[scna_status]] <- scna_label_has(seu0$scna, myscna)
 
   phase_levels <- str_remove(seu0$clusters, "_[0-9]*$") |>
     str_replace("g1_stress", "hypoxia") |>
