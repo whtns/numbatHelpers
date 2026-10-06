@@ -260,11 +260,11 @@ find_cc_genes_by_arm <- function() {
     dplyr::left_join(annotables::grch38, by = "symbol") |>
     dplyr::mutate(seqnames = chr) |>
     dplyr::filter(!is.na(start)) |>
-    as_granges() |>
+    plyranges::as_granges() |>
     identity()
 
   get_arms_ranges() |>
-    join_overlap_intersect(cc_genes) |>
+    plyranges::join_overlap_intersect(cc_genes) |>
     as_tibble() |>
     dplyr::mutate(seqnames = str_pad(seqnames, 2, pad = "0")) |>
     dplyr::arrange(seqnames, arm) |>
