@@ -218,6 +218,9 @@ numbat_complete_rounds <- function(sample_dir, max_round = 12L) {
 #'   reaches 230 MB, which is too slow to open for the eyeballing this exists to
 #'   support.
 #' @param density Rasterisation DPI for reading panels.
+#' @param depth_histograms Whether each round's bulk panel gets a per-clone
+#'   read-count histogram beside each row (see [plot_bulks_with_depth()]).
+#' @param sqlite_path Metadata SQLite database holding `cell_qc_values`.
 #' @return Path to the written PDF, or `NULL` when the sample is not eligible or
 #'   has no complete round.
 #' @export
@@ -232,7 +235,9 @@ collate_iteration_summary <- function(numbat_rds_file,
                                       line_width = 0.1,
                                       max_round = 12L,
                                       col_width = 1200L,
-                                      density = 150) {
+                                      density = 150,
+                                      depth_histograms = TRUE,
+                                      sqlite_path = "batch_hashes.sqlite") {
 
   rds <- unlist(numbat_rds_file, use.names = FALSE)
   rds <- rds[!is.na(rds)]
@@ -312,6 +317,12 @@ collate_iteration_summary <- function(numbat_rds_file,
     fallback <- file.path(sample_dir, sub("\\.pdf$", ".png", basename_png))
     if (file.exists(fallback)) fallback else NA_character_
   }
+
+  # Per-cell depth is the same in every round; only the clone it is keyed to
+  # changes. Read once.
+  depth <- if (isTRUE(depth_histograms))
+    tryCatch(get_sample_cell_depth(sample_id, sqlite_path = sqlite_path),
+             error = function(e) NULL)
 
   # --- one column per round -------------------------------------------------
   cols <- list()
@@ -494,14 +505,17 @@ collate_iteration_summary <- function(numbat_rds_file,
         # min_LLR = 0 is required, not cosmetic: plot_psbulk() would otherwise
         # re-apply its floor to the PER-CLONE LLR and neutralise the genotype
         # colouring just applied.
-        numbat::plot_bulks(numbat_clone_geno_bulk(bk, sg, cpk),
-                           ncol = 1, title = TRUE, min_LLR = 0)
+        # bulk_clones_<k+1> is pseudobulked from clone_post_<k>, so cpk is the
+        # right membership to key the per-clone depth histograms to.
+        plot_bulks_with_depth(numbat_clone_geno_bulk(bk, sg, cpk),
+                              numbat_clone_depth(cpk, depth), min_LLR = 0)
       }, error = function(e) {
         warning("bulk panel failed for ", sample_id, " round ", k, " (",
                 bulk_src, "): ", conditionMessage(e), call. = FALSE)
         NULL
       })
-      bulk_path <- .iter_ggsave(bp, width = 13, height = max(4, 2 * n_grp),
+      bulk_path <- .iter_ggsave(bp, width = if (is.null(depth)) 13 else 15,
+                                height = max(4, 2 * n_grp),
                                 what = paste0(sample_id, " round ", k, " bulk clones"))
       rm(bp)
       gc(verbose = FALSE)
