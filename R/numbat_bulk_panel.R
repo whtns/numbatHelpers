@@ -48,8 +48,9 @@
 #'
 #' @param numbat_rds_file Path to a `*_numbat.rds` file.
 #' @param out_dir Directory for the PDF.
-#' @param manifest Round-selection manifest; used only to report the requested
-#'   round alongside the one the object holds. Missing file is not an error.
+#' @param manifest Round table (`sample_id` plus `selected_round` or `round`);
+#'   used only to report the requested round alongside the one the object holds.
+#'   Missing file is not an error.
 #' @param allele_only_page Whether to append the allele/haplotype page.
 #' @param segments Which colouring to use. `"clone_geno"` colours each clone
 #'   only by the segments its phylogeny genotype (`GT_opt`) carries, so the
@@ -224,9 +225,12 @@ numbat_round_label <- function(nb, sample_dir, sample_id, manifest, fld) {
   if (!is.null(manifest) && file.exists(manifest)) {
     m <- tryCatch(as.data.frame(data.table::fread(manifest)),
                   error = function(e) NULL)
-    if (!is.null(m) && all(c("sample_id", "selected_round") %in% names(m))) {
+    # numbat_selected_round*.csv calls it selected_round; numbat_active_round.csv
+    # (the t=1e-5 cohort's table) calls it round.
+    rcol <- intersect(c("selected_round", "round"), names(m))[1]
+    if (!is.null(m) && "sample_id" %in% names(m) && !is.na(rcol)) {
       hit <- m[m$sample_id == sample_id, , drop = FALSE]
-      if (nrow(hit) == 1L) requested <- as.integer(hit$selected_round[1])
+      if (nrow(hit) == 1L) requested <- as.integer(hit[[rcol]][1])
     }
   }
 
