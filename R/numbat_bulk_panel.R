@@ -67,7 +67,7 @@
 #' @export
 plot_numbat_bulk_clones <- function(numbat_rds_file,
                                     out_dir  = "results/numbat_bulk_clones",
-                                    manifest = "results/numbat_selected_round.csv",
+                                    manifest = "results/numbat_active_round.csv",
                                     allele_only_page = TRUE,
                                     segments = c("clone_geno", "consensus", "retest"),
                                     depth_histograms = TRUE,

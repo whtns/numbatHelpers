@@ -108,14 +108,15 @@ numbat_match_round <- function(segs, sample_dir, max_round = 12L) {
 #'
 #' @param numbat_rds_file Path to a `*_numbat.rds` file.
 #' @param out_dir Directory for the diagnostic PDF.
-#' @param manifest Round-selection manifest written by `src/select_numbat_round.R`.
+#' @param manifest Round table (`sample_id` plus `selected_round` or `round`),
+#'   e.g. `results/numbat_active_round.csv` for the t=1e-5 cohort.
 #' @param make_pdf Whether to render the PDF. FALSE gives the table only.
 #' @param width,height PDF dimensions in inches.
 #' @return A one-row data.frame. `pdf` holds the PDF path (NA if not written).
 #' @export
 qc_numbat_rds <- function(numbat_rds_file,
                           out_dir  = "results/numbat_round_qc",
-                          manifest = "results/numbat_selected_round.csv",
+                          manifest = "results/numbat_active_round.csv",
                           make_pdf = TRUE,
                           width    = 14,
                           height   = 8) {
@@ -177,9 +178,12 @@ qc_numbat_rds <- function(numbat_rds_file,
     # on the right of `==` resolves to the COLUMN, not to this function's
     # argument, and every row matches.
     m <- tryCatch(as.data.frame(data.table::fread(manifest)), error = function(e) NULL)
-    if (!is.null(m) && all(c("sample_id", "selected_round") %in% names(m))) {
+    # numbat_selected_round*.csv calls it selected_round; numbat_active_round.csv
+    # (the t=1e-5 cohort's table) calls it round.
+    rcol <- if (is.null(m)) NA_character_ else intersect(c("selected_round", "round"), names(m))[1]
+    if (!is.null(m) && "sample_id" %in% names(m) && !is.na(rcol)) {
       hit <- m[m$sample_id == sample_id, , drop = FALSE]
-      if (nrow(hit) == 1L) man_round <- as.integer(hit$selected_round[1])
+      if (nrow(hit) == 1L) man_round <- as.integer(hit[[rcol]][1])
     }
   }
 
