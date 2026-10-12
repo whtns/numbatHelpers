@@ -56,6 +56,11 @@
 #'   panel agrees with the clone tree; `"consensus"` colours every clone by the
 #'   consensus state; `"retest"` is numbat's own per-clone retest. See
 #'   `R/numbat_bulk_colouring.R`.
+#' @param depth_histograms Whether to draw a per-clone read-count histogram at
+#'   the right of each clone's row. Needs round-correct clone membership; it is
+#'   skipped (with a warning) when that is unavailable.
+#' @param sqlite_path Metadata SQLite database holding `cell_qc_values`, read by
+#'   [get_sample_cell_depth()] for the per-clone histograms.
 #' @param width,height PDF dimensions in inches.
 #' @return Path to the PDF, or `NA_character_` if nothing could be rendered.
 #' @export
@@ -64,6 +69,8 @@ plot_numbat_bulk_clones <- function(numbat_rds_file,
                                     manifest = "results/numbat_selected_round.csv",
                                     allele_only_page = TRUE,
                                     segments = c("clone_geno", "consensus", "retest"),
+                                    depth_histograms = TRUE,
+                                    sqlite_path = "batch_hashes.sqlite",
                                     width  = 14,
                                     height = 8) {
 
@@ -140,13 +147,27 @@ plot_numbat_bulk_clones <- function(numbat_rds_file,
   # own behaviour and is left alone.
   min_llr <- if (segments == "retest") 5 else 0
 
+  # Per-clone depth. Only when the bulk rows ARE round held's clones: the
+  # fallback nb$bulk_clones carries round held-1's membership, so joining it to
+  # nb$clone_post would attach each clone's histogram to a different cell set.
+  clone_depth <- NULL
+  if (isTRUE(depth_histograms)) {
+    if (membership_ok) {
+      clone_depth <- numbat_clone_depth(fld("clone_post"),
+        get_sample_cell_depth(sample_id, sqlite_path = sqlite_path))
+    } else {
+      warning("no round-correct bulk_clones for ", sample_id,
+              "; per-clone depth histograms skipped", call. = FALSE)
+    }
+  }
+
   pages <- list(expression_and_allele =
-                  function() numbat::plot_bulks(bulk, ncol = 1, title = TRUE,
-                                                min_LLR = min_llr))
+                  function() plot_bulks_with_depth(bulk, clone_depth,
+                                                   min_LLR = min_llr))
   if (isTRUE(allele_only_page)) {
     pages$allele_only <-
-      function() numbat::plot_bulks(bulk, ncol = 1, title = TRUE,
-                                    min_LLR = min_llr, allele_only = TRUE)
+      function() plot_bulks_with_depth(bulk, clone_depth,
+                                       min_LLR = min_llr, allele_only = TRUE)
   }
 
   grDevices::pdf(pdf_path, width = width, height = height)
@@ -243,4 +264,108 @@ numbat_membership_bulk <- function(sample_dir, k) {
 
   tryCatch(as.data.frame(data.table::fread(hit[[1L]], showProgress = FALSE)),
            error = function(e) NULL)
+}
+
+
+#' Per-cell read counts keyed to numbat clone
+#'
+#' @param clone_post numbat's `clone_post` table (`cell`, `clone_opt`).
+#' @param depth Output of [get_sample_cell_depth()].
+#' @return A data frame with `clone` (character) and `nCount_gene`, or `NULL`
+#'   when nothing joins.
+#' @keywords internal
+numbat_clone_depth <- function(clone_post, depth) {
+  if (!is.data.frame(clone_post) || !all(c("cell", "clone_opt") %in% names(clone_post)) ||
+      !is.data.frame(depth) || nrow(depth) == 0) return(NULL)
+  # Barcodes are the same strings in both (AAACCTGAGAAGAAGC-1): numbat is run on
+  # the unfiltered *_seu.rds, which is the stage get_sample_cell_depth() reads.
+  out <- merge(clone_post[, c("cell", "clone_opt")],
+               depth[, c("cell", "nCount_gene")], by = "cell")
+  out <- out[!is.na(out$nCount_gene) & out$nCount_gene > 0, , drop = FALSE]
+  if (nrow(out) == 0) return(NULL)
+  data.frame(clone = as.character(out$clone_opt), nCount_gene = out$nCount_gene,
+             stringsAsFactors = FALSE)
+}
+
+#' numbat::plot_bulks() with a read-count histogram beside each clone's row
+#'
+#' Reproduces `numbat::plot_bulks(ncol = 1, title = TRUE)` row for row, then,
+#' when `clone_depth` is given, puts that clone's per-cell `nCount_gene`
+#' histogram at the right of its row. The x axis (log10) is shared by every
+#' row, so clones can be compared by eye; the y axis is the fraction of that
+#' clone's cells, so a 200-cell clone and a 4,000-cell clone draw at the same
+#' height. Dashed red is the pipeline's `nCount_gene > 1000` filter; solid blue
+#' the clone median; dotted grey the whole-sample median.
+#'
+#' @param bulk A `bulk_clones` table; `sample` is the clone id.
+#' @param clone_depth Output of [numbat_clone_depth()], or `NULL` for plain
+#'   numbat rows.
+#' @param ... Passed to `numbat::plot_psbulk()` (e.g. `min_LLR`, `allele_only`).
+#' @param threshold Count filter to mark.
+#' @param title_size Row title size, as in `plot_bulks()`.
+#' @param hist_width Relative width of the histogram column.
+#' @return A patchwork.
+#' @keywords internal
+plot_bulks_with_depth <- function(bulk, clone_depth = NULL, ...,
+                                  threshold = 1000, title_size = 8,
+                                  hist_width = 0.12) {
+  if (!"sample" %in% colnames(bulk)) bulk$sample <- 1
+
+  rows <- split(bulk, bulk$sample)
+  plot_list <- lapply(rows, function(b) {
+    clone   <- unique(b$sample)
+    n_cells <- unique(b$n_cells)
+    p <- numbat::plot_psbulk(b, ...) +
+      ggplot2::theme(title = ggplot2::element_text(size = title_size),
+                     axis.text.x = ggplot2::element_blank(),
+                     axis.title = ggplot2::element_blank(),
+                     plot.margin = ggplot2::margin(0, 0, 0.25, 0, "cm"))
+    p + ggplot2::ggtitle(if (is.null(n_cells)) clone
+                         else glue::glue("{clone} (n={n_cells})"))
+  })
+
+  if (is.null(clone_depth) || nrow(clone_depth) == 0) {
+    return(patchwork::wrap_plots(plot_list, ncol = 1, guides = "collect"))
+  }
+
+  x_lim  <- range(clone_depth$nCount_gene)
+  med_all <- stats::median(clone_depth$nCount_gene)
+  last   <- names(rows)[length(rows)]
+
+  hist_list <- lapply(names(rows), function(clone) {
+    v <- clone_depth$nCount_gene[clone_depth$clone == clone]
+    h <- ggplot2::ggplot() +
+      ggplot2::scale_x_log10(limits = x_lim,
+        labels = function(x) format(x, big.mark = ",", scientific = FALSE)) +
+      ggplot2::theme_classic(base_size = 7) +
+      ggplot2::theme(axis.title.y = ggplot2::element_blank(),
+                     axis.text.y = ggplot2::element_blank(),
+                     axis.ticks.y = ggplot2::element_blank(),
+                     plot.title = ggplot2::element_text(size = title_size),
+                     plot.margin = ggplot2::margin(0, 0.1, 0.25, 0.2, "cm"))
+    if (length(v) == 0) {
+      return(h + ggplot2::ggtitle("no depth data"))
+    }
+    h <- h +
+      ggplot2::geom_histogram(data = data.frame(x = v),
+                              ggplot2::aes(x = x, y = ggplot2::after_stat(count / sum(count))),
+                              bins = 40, fill = "grey35", colour = NA) +
+      ggplot2::geom_vline(xintercept = threshold, colour = "firebrick",
+                          linetype = "dashed", linewidth = 0.4) +
+      ggplot2::geom_vline(xintercept = med_all, colour = "grey50",
+                          linetype = "dotted", linewidth = 0.4) +
+      ggplot2::geom_vline(xintercept = stats::median(v), colour = "#2166AC",
+                          linewidth = 0.5) +
+      ggplot2::ggtitle(sprintf("median %s  <%s: %.0f%%",
+                               format(round(stats::median(v)), big.mark = ","),
+                               format(threshold, big.mark = ","),
+                               100 * mean(v < threshold)))
+    # Axis label once, on the bottom row, as the psbulk rows do with chromosomes.
+    if (clone == last) h + ggplot2::labs(x = "nCount_gene")
+    else h + ggplot2::theme(axis.title.x = ggplot2::element_blank())
+  })
+
+  interleaved <- as.vector(rbind(plot_list, hist_list))
+  patchwork::wrap_plots(interleaved, ncol = 2, widths = c(1, hist_width),
+                        guides = "collect")
 }

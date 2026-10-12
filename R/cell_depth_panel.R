@@ -77,14 +77,19 @@ get_sample_cell_depth <- function(sample_id,
 
 #' Draw the per-sample sequencing-depth panel
 #'
-#' A log-scaled distribution of `nCount_gene` with the pipeline's own
-#' `> 1000` filter marked, annotated with the sample's median depth and the
-#' fraction of cells below the line.
+#' Two matching log-scaled histograms side by side: reads per cell
+#' (`nCount_gene`) and genes detected per cell (`nFeature_gene`). Each marks the
+#' pipeline's own filter threshold (`filter_sample_qc()` keeps
+#' `nCount_gene > 1000 & nFeature_gene > 1000`) and the sample median, and is
+#' subtitled with the median, the minimum and the fraction of cells below the
+#' line.
 #'
 #' @param sample_id Sample accession.
 #' @param out_dir Directory for the PDF.
 #' @param sqlite_path Path to the metadata SQLite database.
 #' @param threshold The count threshold to mark. Defaults to the pipeline's own.
+#' @param feature_threshold The genes-detected threshold to mark. Defaults to
+#'   the pipeline's own.
 #' @param width,height PDF dimensions in inches.
 #' @return Path to the PDF, or `NA_character_` when the sample has no QC rows.
 #' @export
@@ -92,46 +97,31 @@ plot_cell_depth_panel <- function(sample_id,
                                   out_dir     = "results/cell_depth",
                                   sqlite_path = "batch_hashes.sqlite",
                                   threshold   = 1000,
-                                  width  = 6,
+                                  feature_threshold = 1000,
+                                  width  = 11,
                                   height = 4) {
 
   d <- get_sample_cell_depth(sample_id, sqlite_path = sqlite_path)
   if (nrow(d) == 0) return(NA_character_)
 
-  v <- d$nCount_gene[!is.na(d$nCount_gene) & d$nCount_gene > 0]
-  if (length(v) == 0) return(NA_character_)
+  p_count <- depth_histogram(d$nCount_gene, threshold,
+                             title = "reads per cell", x_lab = "nCount_gene (log scale)")
+  if (is.null(p_count)) return(NA_character_)
+  # A sample with counts but no feature column still gets its depth panel.
+  p_feat <- depth_histogram(d$nFeature_gene, feature_threshold,
+                            title = "genes detected per cell",
+                            x_lab = "nFeature_gene (log scale)")
 
-  med    <- stats::median(v)
-  n_below <- sum(v < threshold)
-  pct_below <- 100 * n_below / length(v)
-
-  # The floor is worth showing explicitly: this cohort was not filtered
-  # uniformly upstream -- 13 samples retain cells down to ~500 counts while 22
-  # never go below ~1250 -- so the minimum is a provenance signal, not noise.
-  sub <- sprintf(
-    "n = %s cells   median = %s   min = %s   below %s: %s (%.1f%%)",
-    format(length(v), big.mark = ","), format(round(med), big.mark = ","),
-    format(round(min(v)), big.mark = ","), format(threshold, big.mark = ","),
-    format(n_below, big.mark = ","), pct_below)
-
-  p <- ggplot2::ggplot(data.frame(nCount = v), ggplot2::aes(x = nCount)) +
-    ggplot2::geom_histogram(bins = 60, fill = "grey35", colour = NA) +
-    ggplot2::geom_vline(xintercept = threshold, colour = "firebrick",
-                        linetype = "dashed", linewidth = 0.5) +
-    ggplot2::geom_vline(xintercept = med, colour = "#2166AC",
-                        linetype = "solid", linewidth = 0.5) +
-    ggplot2::scale_x_log10(
-      labels = function(x) format(x, big.mark = ",", scientific = FALSE)) +
-    ggplot2::annotation_logticks(sides = "b") +
-    ggplot2::labs(
-      title    = paste0(sample_id, " - sequencing depth (unfiltered cells)"),
-      subtitle = sub,
-      caption  = paste0("dashed = pipeline filter (nCount_gene > ", threshold,
-                        "); solid = median. numbat is run on these cells,",
-                        " before that filter."),
-      x = "nCount_gene (log scale)", y = "cells") +
-    ggplot2::theme_bw(base_size = 9) +
-    ggplot2::theme(plot.caption = ggplot2::element_text(hjust = 0, size = 7))
+  p <- if (is.null(p_feat)) p_count else p_count + p_feat
+  p <- p + patchwork::plot_annotation(
+    title   = paste0(sample_id, " - sequencing depth (unfiltered cells)"),
+    caption = paste0("dashed = pipeline filter (nCount_gene > ", threshold,
+                     ", nFeature_gene > ", feature_threshold,
+                     "); solid = median. numbat is run on these cells,",
+                     " before that filter."),
+    theme = ggplot2::theme(
+      plot.title   = ggplot2::element_text(size = 10),
+      plot.caption = ggplot2::element_text(hjust = 0, size = 7)))
 
   dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
   pdf_path <- file.path(out_dir, paste0(sample_id, "_cell_depth.pdf"))
@@ -146,4 +136,44 @@ plot_cell_depth_panel <- function(sample_id,
                     gp = grid::gpar(fontsize = 11, col = "firebrick"))
   }
   pdf_path
+}
+
+#' One log-scaled per-cell QC histogram with its filter line and median
+#'
+#' Shared by both halves of [plot_cell_depth_panel()] so the reads and genes
+#' histograms are drawn identically.
+#'
+#' @param v Numeric vector of per-cell values.
+#' @param threshold Filter threshold to mark (dashed red).
+#' @param title,x_lab Panel title and x-axis label.
+#' @return A ggplot, or `NULL` when `v` has no positive values.
+#' @keywords internal
+depth_histogram <- function(v, threshold, title, x_lab) {
+  v <- v[!is.na(v) & v > 0]
+  if (length(v) == 0) return(NULL)
+
+  med       <- stats::median(v)
+  n_below   <- sum(v < threshold)
+  pct_below <- 100 * n_below / length(v)
+
+  # The floor is worth showing explicitly: this cohort was not filtered
+  # uniformly upstream -- 13 samples retain cells down to ~500 counts while 22
+  # never go below ~1250 -- so the minimum is a provenance signal, not noise.
+  sub <- sprintf(
+    "n = %s   median = %s   min = %s   below %s: %s (%.1f%%)",
+    format(length(v), big.mark = ","), format(round(med), big.mark = ","),
+    format(round(min(v)), big.mark = ","), format(threshold, big.mark = ","),
+    format(n_below, big.mark = ","), pct_below)
+
+  ggplot2::ggplot(data.frame(x = v), ggplot2::aes(x = x)) +
+    ggplot2::geom_histogram(bins = 60, fill = "grey35", colour = NA) +
+    ggplot2::geom_vline(xintercept = threshold, colour = "firebrick",
+                        linetype = "dashed", linewidth = 0.5) +
+    ggplot2::geom_vline(xintercept = med, colour = "#2166AC",
+                        linetype = "solid", linewidth = 0.5) +
+    ggplot2::scale_x_log10(
+      labels = function(x) format(x, big.mark = ",", scientific = FALSE)) +
+    ggplot2::annotation_logticks(sides = "b") +
+    ggplot2::labs(title = title, subtitle = sub, x = x_lab, y = "cells") +
+    ggplot2::theme_bw(base_size = 9)
 }
