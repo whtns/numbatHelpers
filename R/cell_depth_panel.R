@@ -72,6 +72,10 @@ get_sample_cell_depth <- function(sample_id,
     biggest <- names(sort(table(hit$filepath), decreasing = TRUE))[1]
     hit <- hit[hit$filepath == biggest, , drop = FALSE]
   }
+  # The same three samples store make.names() barcodes (AAACCTGAGCAATCTC.1);
+  # numbat and every other sample use AAACCTGAGCAATCTC-1. Callers join on the
+  # numbat form, so normalise here or those samples match no cells at all.
+  hit$cell <- sub("\\.([0-9]+)$", "-\\1", hit$cell)
   hit[, c("cell", "nCount_gene", "nFeature_gene", "percent_mt")]
 }
 
