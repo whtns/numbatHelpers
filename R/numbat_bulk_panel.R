@@ -101,25 +101,24 @@ plot_numbat_bulk_clones <- function(numbat_rds_file,
   # those rows with round held's GT_opt would attach each genotype to a
   # different clone. The table whose clones ARE round held's is
   # bulk_clones_<held+1>, or bulk_clones_final when held is the last round.
+  # No fallback to nb$bulk_clones: its rows would be labelled with clone ids
+  # that name different clones than the clone tree (13 of 33 t=1e-5 samples).
   bulk <- numbat_membership_bulk(sample_dir, held)
-  membership_ok <- !is.null(bulk)
-  if (!membership_ok) bulk <- fld("bulk_clones")
+  if (is.null(bulk)) {
+    warning("no bulk_clones_", held + 1L, " or bulk_clones_final for ", sample_id,
+            "; bulk-clone panel skipped", call. = FALSE)
+    return(NA_character_)
+  }
   if (!is.data.frame(bulk) || nrow(bulk) == 0) return(NA_character_)
 
   # Segment letters are round-specific, so nothing here joins on the letter
   # across rounds: numbat_clone_geno_bulk() resolves GT_opt to genomic
   # intervals from segs_consensus and matches them against the bulk table's own
   # segment extents.
-  if (segments == "clone_geno" && membership_ok) {
+  if (segments == "clone_geno") {
     bulk <- numbat_clone_geno_bulk(bulk, fld("segs_consensus"), fld("clone_post"))
   } else if (segments == "consensus") {
     bulk <- numbat_consensus_bulk(bulk, fld("segs_consensus"))
-  } else if (segments == "clone_geno") {
-    # Falling back silently to numbat's retest colouring would look like a
-    # per-clone genotype and would not be one.
-    warning("no round-correct bulk_clones for ", sample_id,
-            "; drawing numbat's retest colouring instead", call. = FALSE)
-    segments <- "retest"
   }
 
   round_label <- numbat_round_label(nb, sample_dir, sample_id, manifest, fld)
@@ -148,18 +147,12 @@ plot_numbat_bulk_clones <- function(numbat_rds_file,
   # own behaviour and is left alone.
   min_llr <- if (segments == "retest") 5 else 0
 
-  # Per-clone depth. Only when the bulk rows ARE round held's clones: the
-  # fallback nb$bulk_clones carries round held-1's membership, so joining it to
-  # nb$clone_post would attach each clone's histogram to a different cell set.
+  # Per-clone depth: the bulk rows are round held's clones, so they join to
+  # nb$clone_post by clone id.
   clone_depth <- NULL
   if (isTRUE(depth_histograms)) {
-    if (membership_ok) {
-      clone_depth <- numbat_clone_depth(fld("clone_post"),
-        get_sample_cell_depth(sample_id, sqlite_path = sqlite_path))
-    } else {
-      warning("no round-correct bulk_clones for ", sample_id,
-              "; per-clone depth histograms skipped", call. = FALSE)
-    }
+    clone_depth <- numbat_clone_depth(fld("clone_post"),
+      get_sample_cell_depth(sample_id, sqlite_path = sqlite_path))
   }
 
   pages <- list(expression_and_allele =
