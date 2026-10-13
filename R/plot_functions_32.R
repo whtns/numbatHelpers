@@ -189,7 +189,7 @@ volcano_plot_clone_clusters <- function(clone_diffex, sample_id) {
     map_chr(~ glue("{unique(.x$clone_comparison)} {unique(.x$cluster)}"))
 
   volcano_plots <- myres %>%
-    map(dplyr::mutate, diffex_comparison = str_replace(str_extract(clone_comparison, "[0-9]_v_[0-9]"), "_v_", "_")) %>%
+    map(dplyr::mutate, diffex_comparison = str_replace(str_extract(clone_comparison, "[0-9]+_v_[0-9]+"), "_v_", "_")) %>%
     imap(make_volcano_plots, sample_id)
 
   return(volcano_plots)
@@ -217,7 +217,7 @@ volcano_plot_clones <- function(clone_diffex, sample_id) {
 
   volcano_plots <-
     myres %>%
-    map(dplyr::mutate, diffex_comparison = str_replace(str_extract(clone_comparison, "[0-9]_v_[0-9]"), "_v_", "_")) %>%
+    map(dplyr::mutate, diffex_comparison = str_replace(str_extract(clone_comparison, "[0-9]+_v_[0-9]+"), "_v_", "_")) %>%
     imap(make_volcano_plots, sample_id)
 
   return(volcano_plots)

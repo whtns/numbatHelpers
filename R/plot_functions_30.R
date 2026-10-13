@@ -41,17 +41,67 @@ find_diffex_clones <- function(seu_path, numbat_rds_files, large_clone_compariso
   possible_clone_comparison <- possibly(make_clone_comparison)
   
   clone_comparisons <- large_clone_comparisons[[sample_id]]
-  
-  actual_clone_comparisons <- split_vector_into_overlapping_chunks(rev(sort(unique(seu$clone_opt))), 2) |> 
-  	map(paste, collapse = "_v_")
-  
-  clone_comparisons <- map(actual_clone_comparisons, \(x) clone_comparisons[str_detect(names(clone_comparisons), x)]) |> 
-  	unlist()
+
+  # Run the YAML comparisons whose clones are directly related in numbat's clone
+  # tree. Pairing consecutive clone numbers instead skipped every parent/child
+  # pair that is not numbered n+1/n (e.g. 5_v_2, 15_v_2), and its substring match
+  # let "2_v_1" select "12_v_11" too.
+  related <- numbat_related_clone_pairs(mynb, unique(seu$clone_opt))
+  clone_comparisons <- clone_comparisons[
+    str_extract(names(clone_comparisons), "^[0-9]+_v_[0-9]+") %in% related]
 
   diffex <- imap(clone_comparisons, possible_clone_comparison, seu, mynb, location = location) %>%
     purrr::compact()
 
   return(diffex)
+}
+
+#' Directly related clone pairs from numbat's clone tree
+#'
+#' Reads parent -> child clone edges from `nb$mut_graph` (vertex attribute
+#' `clone`). Without a usable graph, falls back to genotypes in `nb$clone_post`:
+#' a clone's parent is the clone whose `GT_opt` is the largest strict subset of
+#' its own. Each present clone is then paired with its nearest *present*
+#' ancestor, so a clone filtered out of the object does not break the chain.
+#'
+#' @param nb A Numbat object, or a list with `mut_graph` and/or `clone_post`.
+#' @param present_clones Clone ids present in the object being compared.
+#' @return Character vector of "<child>_v_<ancestor>" keys.
+#' @export
+numbat_related_clone_pairs <- function(nb, present_clones) {
+  present <- sort(unique(as.integer(stats::na.omit(present_clones))))
+  fld <- function(name) tryCatch(nb[[name]], error = function(e) NULL)
+
+  parent <- integer(0)
+  g <- fld("mut_graph")
+  if (inherits(g, "igraph") && "clone" %in% igraph::vertex_attr_names(g)) {
+    el <- igraph::as_edgelist(g, names = FALSE)
+    cl <- igraph::V(g)$clone
+    parent <- stats::setNames(as.integer(cl[el[, 1]]), cl[el[, 2]])
+  } else {
+    cp <- fld("clone_post")
+    if (is.data.frame(cp) && all(c("clone_opt", "GT_opt") %in% names(cp))) {
+      gt <- unique(cp[, c("clone_opt", "GT_opt")])
+      sets <- stats::setNames(lapply(gt$GT_opt, function(x)
+        if (is.na(x) || !nzchar(x)) character(0) else strsplit(x, ",")[[1]]), gt$clone_opt)
+      for (b in names(sets)) {
+        cand <- names(sets)[vapply(names(sets), function(a)
+          a != b && length(sets[[a]]) < length(sets[[b]]) && all(sets[[a]] %in% sets[[b]]),
+          logical(1))]
+        if (length(cand)) parent[[b]] <- as.integer(cand[which.max(lengths(sets[cand]))])
+      }
+    }
+  }
+  if (!length(parent)) return(character(0))
+
+  out <- character(0)
+  for (c in present) {
+    a <- parent[as.character(c)]
+    seen <- c
+    while (!is.na(a) && !a %in% present && !a %in% seen) { seen <- c(seen, a); a <- parent[as.character(a)] }
+    if (!is.na(a) && a %in% present) out <- c(out, paste0(c, "_v_", a))
+  }
+  unique(out)
 }
 
 #' Perform differential expression analysis
