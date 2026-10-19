@@ -38,35 +38,7 @@ plot_numbat <- function(nb, myseu, myannot, mytitle, sort_by = "clone_opt", show
         axis.ticks.x = ggplot2::element_blank(),
         axis.title.x = ggplot2::element_blank()
       )
-    if (length(heatmap_obj) >= 3 && !is.null(heatmap_obj[[3]]$data) && all(c("seg", "CHROM", "seg_start", "seg_end") %in% colnames(heatmap_obj[[3]]$data))) {
-      seg_labels <- heatmap_obj[[3]]$data %>%
-        dplyr::distinct(CHROM, seg, seg_start, seg_end) %>%
-        dplyr::arrange(CHROM, seg) %>%
-        dplyr::mutate(seg_mid = (seg_start + seg_end) / 2)
-      heatmap_obj[[3]] <- heatmap_obj[[3]] +
-        ggplot2::theme(
-          axis.text.x = ggplot2::element_blank(),
-          axis.ticks.x = ggplot2::element_blank(),
-          axis.title.x = ggplot2::element_blank()
-        ) +
-        ggplot2::geom_text(
-          data = seg_labels,
-          ggplot2::aes(x = seg_mid, y = -0.03, label = seg),
-          inherit.aes = FALSE,
-          size = 2.8,
-          angle = 90,
-          vjust = 0.5,
-          hjust = 1,
-          check_overlap = TRUE
-        ) +
-        ggplot2::theme(
-          strip.text = ggplot2::element_blank(),
-          axis.ticks.x = ggplot2::element_blank(),
-          axis.title.x = ggplot2::element_blank(),
-          plot.margin = ggplot2::margin(5.5, 5.5, 24, 5.5)
-        ) +
-        ggplot2::coord_cartesian(clip = "off")
-    }
+    heatmap_obj <- .add_segment_label_strip(heatmap_obj)
     heatmap_obj
   }
   myheatmap <- .add_segment_labels_to_heatmap(myheatmap, show_segment_names_on_x)
@@ -99,32 +71,69 @@ plot_numbat_w_phylo <- function(nb, myseu, myannot, mytitle, show_segment_names_
         axis.ticks.x = ggplot2::element_blank(),
         axis.title.x = ggplot2::element_blank()
       )
-    if (length(myheatmap) >= 3 && !is.null(myheatmap[[3]]$data) && all(c("seg", "CHROM", "seg_start", "seg_end") %in% colnames(myheatmap[[3]]$data))) {
-      seg_labels <- myheatmap[[3]]$data %>%
-        dplyr::distinct(CHROM, seg, seg_start, seg_end) %>%
-        dplyr::arrange(CHROM, seg) %>%
-        dplyr::mutate(seg_mid = (seg_start + seg_end) / 2)
-      myheatmap[[3]] <- myheatmap[[3]] +
-        ggplot2::geom_text(
-          data = seg_labels,
-          ggplot2::aes(x = seg_mid, y = -0.03, label = seg),
-          inherit.aes = FALSE,
-          size = 2.8,
-          angle = 90,
-          vjust = 0.5,
-          hjust = 1,
-          check_overlap = TRUE
-        ) +
-        ggplot2::theme(
-          strip.text = ggplot2::element_blank(),
-          axis.ticks.x = ggplot2::element_blank(),
-          axis.title.x = ggplot2::element_blank(),
-          plot.margin = ggplot2::margin(5.5, 5.5, 24, 5.5)
-        ) +
-        ggplot2::coord_cartesian(clip = "off")
-    }
+    myheatmap <- .add_segment_label_strip(myheatmap)
   }
   return(myheatmap)
+}
+
+# Segment names drawn in an un-faceted strip under the numbat heatmap. p_segs is
+# facet_grid(. ~ CHROM, space = "free") with zero panel spacing, so laying the
+# facets end to end gives one genome-wide x that maps linearly onto the heatmap
+# width. ggrepel repels per panel; one strip panel lets it see every label, so
+# none are dropped or overlap (geom_text(check_overlap = TRUE) dropped them).
+.add_segment_label_strip <- function(heatmap_obj, strip_height = 0.12, label_size = 2.8) {
+  n <- length(heatmap_obj)
+  if (n < 1) return(heatmap_obj)
+  p_segs <- heatmap_obj[[n]]
+  if (is.null(p_segs$data) || !all(c("seg", "CHROM", "seg_start", "seg_end") %in% colnames(p_segs$data))) {
+    return(heatmap_obj)
+  }
+  layout <- ggplot2::ggplot_build(p_segs)$layout
+  panels <- layout$layout %>%
+    dplyr::arrange(PANEL) %>%
+    dplyr::mutate(
+      CHROM = as.character(CHROM),
+      x_min = purrr::map_dbl(PANEL, ~ layout$panel_params[[.x]]$x.range[1]),
+      x_max = purrr::map_dbl(PANEL, ~ layout$panel_params[[.x]]$x.range[2]),
+      offset = cumsum(x_max - x_min) - (x_max - x_min)
+    ) %>%
+    dplyr::select(CHROM, x_min, x_max, offset)
+  total <- sum(panels$x_max - panels$x_min)
+  seg_labels <- p_segs$data %>%
+    dplyr::mutate(CHROM = as.character(CHROM)) %>%
+    dplyr::distinct(CHROM, seg, seg_start, seg_end) %>%
+    dplyr::inner_join(panels, by = "CHROM") %>%
+    dplyr::mutate(x = offset + (seg_start + seg_end) / 2 - x_min) %>%
+    dplyr::arrange(x)
+  chrom_breaks <- panels$offset[-1]
+
+  strip <- ggplot2::ggplot(seg_labels, ggplot2::aes(x = x, y = 0, label = seg)) +
+    ggplot2::geom_segment(
+      data = data.frame(x = chrom_breaks),
+      ggplot2::aes(x = x, xend = x, y = 0, yend = -0.12),
+      inherit.aes = FALSE, colour = "gray70", linewidth = 0.2
+    ) +
+    ggrepel::geom_text_repel(
+      angle = 90, hjust = 1, direction = "x", nudge_y = -0.35,
+      size = label_size, max.overlaps = Inf, min.segment.length = 0,
+      segment.size = 0.2, segment.colour = "gray55", box.padding = 0.05,
+      force_pull = 0.5, seed = 1, xlim = c(0, total)
+    ) +
+    ggplot2::scale_x_continuous(limits = c(0, total), expand = ggplot2::expansion(0)) +
+    ggplot2::scale_y_continuous(limits = c(-1, 0), expand = ggplot2::expansion(0)) +
+    ggplot2::coord_cartesian(clip = "off") +
+    ggplot2::theme_void() +
+    ggplot2::theme(plot.margin = ggplot2::margin(0, 0, 0, 0))
+
+  heatmap_obj[[n]] <- p_segs + ggplot2::theme(strip.text = ggplot2::element_blank())
+  plots <- lapply(seq_len(n), function(i) heatmap_obj[[i]])
+  widths <- heatmap_obj$patches$layout$widths
+  patchwork::wrap_plots(
+    c(plots, rep(list(patchwork::plot_spacer()), n - 1), list(strip)),
+    ncol = n, byrow = TRUE,
+    widths = widths, heights = c(1, strip_height),
+    guides = "collect"
+  )
 }
 
 safe_plot_numbat <- purrr::safely(plot_numbat, otherwise = NA_real_)
