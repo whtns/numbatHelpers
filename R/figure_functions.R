@@ -559,12 +559,20 @@ plot_fig_01 <- function(seu_path, plot_path = "results/fig_01.pdf") {
 
 # clone_labels_hash: the clone_labels_sqlite target's value. Unused here except to make
 # targets rebuild the figure when the stored subclone labels change.
+# read_depth: add a fourth plot colored by nCount_gene to rows C and D, and a row G that
+# repeats E's per-cluster facets colored by nCount_gene. Off for the manuscript figure;
+# on, the default output moves to results/fig_02_t1e5_depth/ so the two never collide.
 plot_fig_02 <- function(seu_path, numbat_rds_files, large_clone_simplifications, plot_path = NULL,
-                        clone_labels_hash = NULL, sqlite_path = "batch_hashes.sqlite") {
+                        clone_labels_hash = NULL, sqlite_path = "batch_hashes.sqlite",
+                        read_depth = FALSE) {
 	if (is.na(seu_path)) return(NA_character_)
 
 	sample_id <- stringr::str_extract(seu_path, "SR[RX][0-9]+")
-	plot_path <- plot_path %||% glue::glue("results/fig_02_{sample_id}.pdf")
+	plot_path <- plot_path %||% if (read_depth) {
+		glue::glue("results/fig_02_t1e5_depth/fig_02_{sample_id}.pdf")
+	} else {
+		glue::glue("results/fig_02_{sample_id}.pdf")
+	}
 	fs::dir_create(fs::path_dir(plot_path))
 
 	# Panel A: phylo heatmap (PDF)
@@ -616,7 +624,12 @@ plot_fig_02 <- function(seu_path, numbat_rds_files, large_clone_simplifications,
 	seu <- add_scna_labels(seu, sample_id, diploid_label = "diploid", sqlite_path = sqlite_path)
 	seu$scna <- forcats::fct_relabel(seu$scna, stringr::str_wrap, width = 30)
 
-	cc_data <- FetchData(seu, c("clusters", "G2M.Score", "S.Score", "Phase", "scna"))
+	cc_data <- FetchData(seu, c("clusters", "G2M.Score", "S.Score", "Phase", "scna",
+	                            if (read_depth) "nCount_gene"))
+	# Deepest cells draw last so they are not buried under the shallow majority.
+	if (read_depth) cc_data <- cc_data[order(cc_data$nCount_gene), ]
+	depth_scale <- function(aes_name = "colour")
+		ggplot2::scale_colour_viridis_c(trans = "log10", name = "nCount_gene", aesthetics = aes_name)
 
 	centroid_data <- cc_data %>%
 		dplyr::group_by(clusters) %>%
@@ -637,9 +650,15 @@ plot_fig_02 <- function(seu_path, numbat_rds_files, large_clone_simplifications,
 	panel_c <- (DimPlot(seu, group.by = "clusters", label = TRUE) + NoLegend()) |
 	           DimPlot(seu, group.by = "Phase") |
 	           (DimPlot(seu, group.by = "scna") + labs(title = "Subclone"))
+	if (read_depth) {
+		panel_c <- panel_c |
+			(FeaturePlot(seu, "nCount_gene", order = TRUE) + depth_scale() +
+			 labs(title = "Read count (nCount_gene)"))
+	}
 
 	# Panel D: CC space scatter x3 (clusters, Phase, scna) — same dimensions as panel C (2996x1498)
-	panel_titles <- c(clusters = "clusters", Phase = "Phase", scna = "Subclone")
+	panel_titles <- c(clusters = "clusters", Phase = "Phase", scna = "Subclone",
+	                  nCount_gene = "Read count (nCount_gene)")
 	make_cc_scatter <- function(color_by, show_fill_legend = TRUE) {
 		p <- cc_data %>%
 			ggplot(aes(x = S.Score, y = G2M.Score, color = .data[[color_by]])) +
@@ -651,12 +670,14 @@ plot_fig_02 <- function(seu_path, numbat_rds_files, large_clone_simplifications,
 			) +
 			theme_light() +
 			labs(title = panel_titles[[color_by]], color = panel_titles[[color_by]])
+		if (color_by == "nCount_gene") p <- p + depth_scale()
 		if (!show_fill_legend) p <- p + guides(fill = "none")
 		p
 	}
 	panel_d <- make_cc_scatter("clusters") |
 	           make_cc_scatter("Phase", show_fill_legend = FALSE) |
 	           make_cc_scatter("scna", show_fill_legend = FALSE)
+	if (read_depth) panel_d <- panel_d | make_cc_scatter("nCount_gene", show_fill_legend = FALSE)
 
 	# Panel E: faceted by cluster, colored by scna
 	panel_e <- cc_data %>%
@@ -696,14 +717,48 @@ plot_fig_02 <- function(seu_path, numbat_rds_files, large_clone_simplifications,
 		labels = c("E", "F"), label_size = 14
 	)
 
-	page <- cowplot::plot_grid(
-		row1, panel_c, panel_d, row4,
-		ncol = 1,
-		rel_heights = c(1000, 1000, 1000, 1070),
-		labels = c("", "C", "D", ""), label_size = 14
-	)
+	if (!read_depth) {
+		page <- cowplot::plot_grid(
+			row1, panel_c, panel_d, row4,
+			ncol = 1,
+			rel_heights = c(1000, 1000, 1000, 1070),
+			labels = c("", "C", "D", ""), label_size = 14
+		)
+		# Page width = panel C width; total height = sum of row heights
+		ggsave(plot_path, page, width = 2996, height = 1000 + 1000 + 1000 + 1070, units = "px")
+		return(plot_path)
+	}
 
-	# Page width = panel C width; total height = sum of row heights
-	ggsave(plot_path, page, width = 2996, height = 1000 + 1000 + 1000 + 1070, units = "px")
+	# Panel G: E's per-cluster facets, colored by read count
+	panel_g <- cc_data %>%
+		ggplot(aes(x = S.Score, y = G2M.Score, color = nCount_gene)) +
+		geom_point(size = 0.1) +
+		geom_point(
+			data = centroid_data,
+			aes(x = mean_x, y = mean_y),
+			size = 6, shape = 23, fill = "grey60", colour = "black", alpha = 0.7, inherit.aes = FALSE
+		) +
+		facet_wrap(~clusters) +
+		geom_label(
+			data = data.frame(clusters = unique(cc_data$clusters)),
+			aes(label = clusters),
+			x = max(cc_data$S.Score),
+			y = max(cc_data$G2M.Score),
+			hjust = 1, vjust = 1,
+			inherit.aes = FALSE
+		) +
+		depth_scale() +
+		theme_light() +
+		theme(strip.background = element_blank(), strip.text.x = element_blank())
+
+	# Four plots per row in C and D: widen the page by a third so each keeps its size.
+	page <- cowplot::plot_grid(
+		row1, panel_c, panel_d, row4, panel_g,
+		ncol = 1,
+		rel_heights = c(1000, 1000, 1000, 1070, 1070),
+		labels = c("", "C", "D", "", "G"), label_size = 14
+	)
+	fs::dir_create(fs::path_dir(plot_path))
+	ggsave(plot_path, page, width = 3995, height = 1000 + 1000 + 1000 + 1070 + 1070, units = "px")
 	return(plot_path)
 }
