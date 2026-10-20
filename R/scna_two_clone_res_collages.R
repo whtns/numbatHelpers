@@ -16,73 +16,6 @@
 # assumes >= 2 surviving `scna` levels and dies "subscript out of bounds" on
 # degenerate two-clone subsets.
 
-#' Two-clone SCNA marker-heatmap collages across a resolution sweep
-#'
-#' Restricts a Seurat object to the two clones of an SCNA comparison from
-#' `large_clone_comparisons` (the clone that acquired `scna_of_interest` and its
-#' immediately preceding clone) and emits a marker-heatmap + phase-scatter collage
-#' at each requested resolution.
-#'
-#' The object is restricted to the two compared clones FIRST, and the PCA, SNN
-#' graph, and clusters are then recomputed on that subset -- so the clustering
-#' reflects structure among the cells actually under analysis rather than
-#' structure of the whole low-hypoxia population. Cluster order, phase labels, and
-#' marker-gene rows are likewise derived on the subset inside
-#' [plot_seu_marker_heatmap()].
-#'
-#' Consequence: cluster IDs are NOT comparable with the full-population collage,
-#' nor across SCNAs for the same sample -- each two-clone collage is its own
-#' re-analysis. (This replaced an earlier "lock to full" behaviour, where the
-#' persisted `<assay>_snn_res.<r>` columns were read as-is and the panels were
-#' merely restricted to the two clones at the end, making the collage a true zoom
-#' of the full one. If you need that view back, [plot_seu_marker_heatmap()] still
-#' accepts `display_cells`, which is what implemented it.)
-#'
-#' Because the clusters are computed here, any requested resolution works --
-#' nothing depends on which `<assay>_snn_res.<r>` columns the hypoxia split
-#' happened to persist. The default sweep (0.2..0.8) still mirrors the full
-#' low-hypoxia sweep so every two-clone panel has a same-resolution twin.
-#'
-#' Output naming follows [plot_seu_marker_heatmap()]'s `label`, e.g.
-#' `results/<SRX>_hypoxia_low_seu.rds__1q_res0.2_heatmap_phase_scatter_patchwork.pdf`.
-#'
-#' @param seu_path Path to a Seurat `.rds` carrying `clone_opt` metadata.
-#' @param scna_of_interest SCNA tag matched against comparison names, e.g.
-#'   "1q", "2p", "16q" (matches "3_v_2_1q+", "2_v_1_16q-", ...).
-#' @param large_clone_comparisons The parsed `large_clone_comparisons.yaml` list.
-#' @param resolutions Resolution vector (default `seq(0.2, 1.2, 0.2)`).
-#' @param nb_paths Numbat RDS paths for the clone-tree panel; `NULL` (default)
-#'   omits it -- a two-clone tree is uninformative and the tree is the fragile /
-#'   expensive panel.
-#' @param clone_simplifications Passed through to [plot_seu_marker_heatmap()].
-#' @param assay Assay whose `<assay>_snn_res.<r>` columns are used (default "SCT").
-#' @param bar_signif Mark each cluster bar with the significance of its
-#'   SCNA-status composition versus all other cells (Fisher's exact, BH-adjusted
-#'   within the panel). Default `TRUE` here -- "is this cluster enriched for the
-#'   clone that acquired the SCNA" is the question these collages exist to answer.
-#'   The per-cluster q-values are also written to
-#'   `results/<basename>_<scna>_res<r>_bar_enrichment.csv`.
-#' @param bar_signif_min_cells Clusters smaller than this are not tested; their
-#'   axis label reads `(n<min)` rather than silently going unmarked (default 20).
-#' @param score_annotations Continuous per-cell metadata columns to draw as
-#'   heatmap column annotations beside the cell-cycle scores, e.g.
-#'   `c("hypoxia_score", "mito_score")`. Missing columns are computed via
-#'   [.ensure_hypoxia_scores()] on the full object before the two-clone subset.
-#'   `NULL` (default) keeps the cell-cycle-only annotation.
-#' @param read_depth If `TRUE`, add a band with the phase facets and a UMAP
-#'   colored by `nCount_gene` (see [plot_seu_marker_heatmap()]).
-#' @param .comparison Internal. Restricts the run to a single named comparison
-#'   from `large_clone_comparisons` instead of looking one up by SCNA. Set by the
-#'   recursive call the function makes when a sample has more than one comparison
-#'   matching `scna_of_interest`; not meant to be passed by callers.
-#' @param .label_tag Internal. Clone-pair tag (e.g. `"4v3"`) appended to the SCNA
-#'   in the output filename, so the per-comparison collage sets of such a sample
-#'   do not overwrite each other. `NULL` (the single-comparison case) leaves the
-#'   filename unchanged.
-#' @return Character vector of PDF paths written (`NA_character_` per failed or
-#'   skipped resolution). Never errors -- best-effort, like the sibling collage
-#'   builders.
-#' @export
 #' Ensure a Seurat object carries S.Score / G2M.Score
 #'
 #' Adds Tirosh cell-cycle scores via [Seurat::CellCycleScoring()] when they are
@@ -189,6 +122,73 @@
   seu
 }
 
+#' Two-clone SCNA marker-heatmap collages across a resolution sweep
+#'
+#' Restricts a Seurat object to the two clones of an SCNA comparison from
+#' `large_clone_comparisons` (the clone that acquired `scna_of_interest` and its
+#' immediately preceding clone) and emits a marker-heatmap + phase-scatter collage
+#' at each requested resolution.
+#'
+#' The object is restricted to the two compared clones FIRST, and the PCA, SNN
+#' graph, and clusters are then recomputed on that subset -- so the clustering
+#' reflects structure among the cells actually under analysis rather than
+#' structure of the whole low-hypoxia population. Cluster order, phase labels, and
+#' marker-gene rows are likewise derived on the subset inside
+#' [plot_seu_marker_heatmap()].
+#'
+#' Consequence: cluster IDs are NOT comparable with the full-population collage,
+#' nor across SCNAs for the same sample -- each two-clone collage is its own
+#' re-analysis. (This replaced an earlier "lock to full" behaviour, where the
+#' persisted `<assay>_snn_res.<r>` columns were read as-is and the panels were
+#' merely restricted to the two clones at the end, making the collage a true zoom
+#' of the full one. If you need that view back, [plot_seu_marker_heatmap()] still
+#' accepts `display_cells`, which is what implemented it.)
+#'
+#' Because the clusters are computed here, any requested resolution works --
+#' nothing depends on which `<assay>_snn_res.<r>` columns the hypoxia split
+#' happened to persist. The default sweep (0.2..0.8) still mirrors the full
+#' low-hypoxia sweep so every two-clone panel has a same-resolution twin.
+#'
+#' Output naming follows [plot_seu_marker_heatmap()]'s `label`, e.g.
+#' `results/<SRX>_hypoxia_low_seu.rds__1q_res0.2_heatmap_phase_scatter_patchwork.pdf`.
+#'
+#' @param seu_path Path to a Seurat `.rds` carrying `clone_opt` metadata.
+#' @param scna_of_interest SCNA tag matched against comparison names, e.g.
+#'   "1q", "2p", "16q" (matches "3_v_2_1q+", "2_v_1_16q-", ...).
+#' @param large_clone_comparisons The parsed `large_clone_comparisons.yaml` list.
+#' @param resolutions Resolution vector (default `seq(0.2, 1.2, 0.2)`).
+#' @param nb_paths Numbat RDS paths for the clone-tree panel; `NULL` (default)
+#'   omits it -- a two-clone tree is uninformative and the tree is the fragile /
+#'   expensive panel.
+#' @param clone_simplifications Passed through to [plot_seu_marker_heatmap()].
+#' @param assay Assay whose `<assay>_snn_res.<r>` columns are used (default "SCT").
+#' @param bar_signif Mark each cluster bar with the significance of its
+#'   SCNA-status composition versus all other cells (Fisher's exact, BH-adjusted
+#'   within the panel). Default `TRUE` here -- "is this cluster enriched for the
+#'   clone that acquired the SCNA" is the question these collages exist to answer.
+#'   The per-cluster q-values are also written to
+#'   `results/<basename>_<scna>_res<r>_bar_enrichment.csv`.
+#' @param bar_signif_min_cells Clusters smaller than this are not tested; their
+#'   axis label reads `(n<min)` rather than silently going unmarked (default 20).
+#' @param score_annotations Continuous per-cell metadata columns to draw as
+#'   heatmap column annotations beside the cell-cycle scores, e.g.
+#'   `c("hypoxia_score", "mito_score")`. Missing columns are computed via
+#'   [.ensure_hypoxia_scores()] on the full object before the two-clone subset.
+#'   `NULL` (default) keeps the cell-cycle-only annotation.
+#' @param read_depth If `TRUE`, add a band with the phase facets and a UMAP
+#'   colored by `nCount_gene` (see [plot_seu_marker_heatmap()]).
+#' @param .comparison Internal. Restricts the run to a single named comparison
+#'   from `large_clone_comparisons` instead of looking one up by SCNA. Set by the
+#'   recursive call the function makes when a sample has more than one comparison
+#'   matching `scna_of_interest`; not meant to be passed by callers.
+#' @param .label_tag Internal. Clone-pair tag (e.g. `"4v3"`) appended to the SCNA
+#'   in the output filename, so the per-comparison collage sets of such a sample
+#'   do not overwrite each other. `NULL` (the single-comparison case) leaves the
+#'   filename unchanged.
+#' @return Character vector of PDF paths written (`NA_character_` per failed or
+#'   skipped resolution). Never errors -- best-effort, like the sibling collage
+#'   builders.
+#' @export
 plot_scna_two_clone_res_collages <- function(seu_path,
                                              scna_of_interest,
                                              large_clone_comparisons,
