@@ -80,6 +80,13 @@ plot_clone_tree <- function(clone_df, tumor_id, nb_path, clone_simplifications =
 
   mynb$clone_post <- dplyr::filter(mynb$clone_post, cell %in% clone_df$cell)
 
+  # numbat's plot_mut_history() sizes nodes with clone_sizes[V(G)$clone]: a
+  # POSITIONAL lookup into count(clone_opt). With a character clone_opt, count()
+  # sorts "1","10","11",...,"2", so from 10 clones up every node took another
+  # clone's size (SRX10031194 round 3: node 4 drawn at clone 12's 342 cells).
+  # plot_numbat() used to coerce the caller's clone_post to character in place.
+  mynb$clone_post$clone_opt <- as.integer(as.character(mynb$clone_post$clone_opt))
+
   # Did the filter drop any clone? The two-clone SCNA collages draw this panel
   # beside a clone UMAP, a clone heatmap annotation and a stacked bar captioned
   # "6p+ (clone 7)" / "preceding (clone 4)", all of which label cells by

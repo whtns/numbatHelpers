@@ -526,7 +526,9 @@ collate_iteration_summary <- function(numbat_rds_file,
     wf_img   <- .iter_panel(wf_path,   "Waterfall: P(SCNA) per cell, by segment",
                             width = col_width, density = density, size = 26L)
     bulk_img <- .iter_panel(bulk_path,
-                            sprintf("Bulk clones: round %d membership (%s), coloured by round %d clone genotype",
+                            # numbat pseudobulks only clones of > min_cells (10) cells,
+                            # so smaller clones in the tree above have no row here.
+                            sprintf("Bulk clones: round %d membership (%s), coloured by round %d clone genotype; clones of <= 10 cells are not pseudobulked",
                                     k, bulk_src, k),
                             width = col_width, density = density, size = 26L)
 

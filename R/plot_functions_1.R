@@ -2,6 +2,10 @@
 
 #' @export
 plot_numbat <- function(nb, myseu, myannot, mytitle, sort_by = "clone_opt", show_segment_names_on_x = FALSE, ...) {
+  # numbat objects are R6 (reference semantics): coercing clone_opt below would
+  # otherwise rewrite the caller's object, and plot_clone_tree() on that same
+  # object then sized nodes by the wrong clones. Work on a copy.
+  if (inherits(nb, "R6")) nb <- nb$clone(deep = TRUE)
   if ("clone_opt" %in% colnames(nb$clone_post)) {
     nb$clone_post$clone_opt <- as.character(nb$clone_post$clone_opt)
   }
@@ -47,6 +51,8 @@ plot_numbat <- function(nb, myseu, myannot, mytitle, sort_by = "clone_opt", show
 
 #' @export
 plot_numbat_w_phylo <- function(nb, myseu, myannot, mytitle, show_segment_names_on_x = FALSE, ...) {
+  # Copy first: see plot_numbat().
+  if (inherits(nb, "R6")) nb <- nb$clone(deep = TRUE)
   if ("clone_opt" %in% colnames(nb$clone_post)) {
     nb$clone_post$clone_opt <- as.character(nb$clone_post$clone_opt)
   }
