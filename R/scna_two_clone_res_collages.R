@@ -69,6 +69,8 @@
 #'   `c("hypoxia_score", "mito_score")`. Missing columns are computed via
 #'   [.ensure_hypoxia_scores()] on the full object before the two-clone subset.
 #'   `NULL` (default) keeps the cell-cycle-only annotation.
+#' @param read_depth If `TRUE`, add a band with the phase facets and a UMAP
+#'   colored by `nCount_gene` (see [plot_seu_marker_heatmap()]).
 #' @param .comparison Internal. Restricts the run to a single named comparison
 #'   from `large_clone_comparisons` instead of looking one up by SCNA. Set by the
 #'   recursive call the function makes when a sample has more than one comparison
@@ -197,6 +199,7 @@ plot_scna_two_clone_res_collages <- function(seu_path,
                                              bar_signif = TRUE,
                                              bar_signif_min_cells = 20,
                                              score_annotations = NULL,
+                                             read_depth = FALSE,
                                              .comparison = NULL,
                                              .label_tag = NULL) {
   if (is.null(seu_path) || length(seu_path) == 0 ||
@@ -255,6 +258,7 @@ plot_scna_two_clone_res_collages <- function(seu_path,
         bar_signif              = bar_signif,
         bar_signif_min_cells    = bar_signif_min_cells,
         score_annotations       = score_annotations,
+        read_depth              = read_depth,
         .comparison             = cmp,
         .label_tag              = stringr::str_replace(
           stringr::str_extract(cmp, "[0-9]+_v_[0-9]+"), "_v_", "v"))
@@ -412,6 +416,7 @@ plot_scna_two_clone_res_collages <- function(seu_path,
         bar_var = "scna_status",
         bar_signif = bar_signif, bar_signif_min_cells = bar_signif_min_cells,
         score_annotations = score_annotations,
+        read_depth = read_depth,
         label = glue::glue("_{scna_label}_res{res}_"))
 
       if (length(out) != 1 || is.na(out) || !file.exists(out)) {

@@ -799,6 +799,10 @@ run_hypoxia_clustering = FALSE, cluster_resolutions = seq(0.2, 1, by = 0.2), ass
 #                      heatmap column annotations beside G2M.Score / S.Score,
 #                      each in its own colour (score_annotation_hues). Default
 #                      NULL: only the cell-cycle scores, as before.
+#   read_depth       - add a band of two panels colored by nCount_gene (log10):
+#                      I, the per-cluster phase facets of B, and J, a UMAP. Same
+#                      plots as plot_fig_02(read_depth = TRUE). Skipped when the
+#                      object has no nCount_gene column.
 # The stacked-bar fill now inherits the clone palette when bar_var relabels the
 # clones, so its colours match the UMAP / heatmap clone annotation (#34).
 plot_seu_marker_heatmap <- function(seu_path = NULL, cluster_order = NULL,
@@ -812,6 +816,7 @@ bar_signif = FALSE, bar_signif_min_cells = 20,
 column_label_rot = 45, segment_tree = TRUE, clustree = TRUE,
 mark_removed_col = NULL,
 score_annotations = NULL,
+read_depth = FALSE,
 # G2M.Score / S.Score are pinned to the two colours hue_pal() gave them when they
 # were the ONLY continuous annotations, so adding score_annotations extends the
 # palette instead of recolouring the cell-cycle rows -- otherwise the annotated
@@ -1200,6 +1205,46 @@ score_annotation_hues = c(G2M.Score = "#F8766D", S.Score = "#00BFC4",
       })
   } else NULL
 
+  # Read-depth panels (read_depth = TRUE): B's facets and a UMAP, colored by
+  # nCount_gene on a log10 scale, deepest cells drawn last.
+  depth_facet_plot <- depth_umap_plot <- NULL
+  if (isTRUE(read_depth)) {
+    if ("nCount_gene" %in% colnames(seu@meta.data)) {
+      depth_scale <- ggplot2::scale_colour_viridis_c(trans = "log10", name = "nCount_gene")
+      depth_data <- cbind(cc_data, nCount_gene = seu$nCount_gene[rownames(cc_data)])
+      depth_data <- depth_data[order(depth_data$nCount_gene), ]
+      depth_facet_plot <-
+        depth_data %>%
+        ggplot(aes(x = `S.Score`, y = `G2M.Score`, color = nCount_gene)) +
+        geom_point(size = 0.1) +
+        geom_point(data = centroid_data, aes(x = mean_x, y = mean_y), fill = "grey60",
+                   size = 6, alpha = 0.7, shape = 23, colour = "black", inherit.aes = FALSE) +
+        facet_wrap(~ .data[["clusters"]], ncol = 2) +
+        geom_label(
+          data = data.frame(clusters = unique(seu[[]][["clusters"]]),
+                            label = unique(seu[[]][["clusters"]])),
+          aes(label = label),
+          x = max(cc_data$S.Score) + 0.05,
+          y = max(cc_data$G2M.Score) - 0.1,
+          hjust = 1, vjust = 1, inherit.aes = FALSE
+        ) +
+        depth_scale +
+        theme_light() +
+        theme(strip.background = element_blank(), strip.text.x = element_blank()) +
+        labs(title = "Read count (nCount_gene)")
+      depth_umap_plot <- tryCatch(
+        suppressMessages(Seurat::FeaturePlot(seu, features = "nCount_gene", order = TRUE) +
+                           depth_scale + labs(title = "Read count (nCount_gene)")),
+        error = function(e) {
+          message("!! read-depth umap panel failed for ", tumor_id, ": ",
+                  conditionMessage(e))
+          NULL
+        })
+    } else {
+      message("read_depth: no nCount_gene column for ", tumor_id, "; panels skipped")
+    }
+  }
+
   # Assemble the design row-band by row-band so an absent panel costs its band
   # rather than needing a hand-written layout per combination. Left 11 columns are
   # always the heatmap; the right 8 split into two 4-wide sub-columns.
@@ -1208,6 +1253,7 @@ score_annotation_hues = c(G2M.Score = "#F8766D", S.Score = "#00BFC4",
   #   H removed-cell umap             (1 row, only when mark_removed_col is set)
   #   B phase facets | C umaps        (2 rows)
   #   B phase facets | D bars         (3 rows)
+  #   I depth facets | J depth umap   (3 rows, only when read_depth = TRUE)
   # The trees and clustree take 1 band each rather than 2: they are compact panels
   # (a single edge for the two-clone trees, a small ladder for clustree) that were
   # over-sized at 2 bands, and shrinking their bands shrinks the page height with
@@ -1221,6 +1267,10 @@ score_annotation_hues = c(G2M.Score = "#F8766D", S.Score = "#00BFC4",
   if (!is.null(clustree_plot)) bands <- c(bands, paste0(A, "GGGGGGGG"))
   if (!is.null(removed_umap_plot)) bands <- c(bands, paste0(A, "HHHHHHHH"))
   bands <- c(bands, rep(paste0(A, "BBBBCCCC"), 2), rep(paste0(A, "BBBBDDDD"), 3))
+  if (!is.null(depth_facet_plot)) {
+    right <- if (!is.null(depth_umap_plot)) "IIIIJJJJ" else "IIIIIIII"
+    bands <- c(bands, rep(paste0(A, right), 3))
+  }
   layout <- paste(bands, collapse = "\n")
 
   collage_plots <- list(
@@ -1231,7 +1281,9 @@ score_annotation_hues = c(G2M.Score = "#F8766D", S.Score = "#00BFC4",
     "E" = clone_tree_plot,
     "F" = segment_tree_plot,
     "G" = clustree_plot,
-    "H" = removed_umap_plot
+    "H" = removed_umap_plot,
+    "I" = depth_facet_plot,
+    "J" = depth_umap_plot
   )
   collage_plots <- collage_plots[!vapply(collage_plots, is.null, logical(1))]
 
