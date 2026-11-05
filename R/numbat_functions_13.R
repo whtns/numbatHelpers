@@ -69,10 +69,10 @@ check_cluster_marker_gene <- function(seu_path, cluster_dictionary){
 			seu@meta.data |>
 			dplyr::group_by(`gene_snn_res.0.2`) |> 
 			dplyr::summarize(n_cells = dplyr::n()) |> 
-			dplyr::mutate(Cluster = as.numeric(gene_snn_res.0.2))
+			dplyr::mutate(Cluster = as.numeric(as.character(gene_snn_res.0.2)))
 		
 		df1 <- seu@misc$markers$gene_snn_res.0.2$presto |> 
-			dplyr::mutate(Cluster = as.numeric(Cluster)) |> 
+			dplyr::mutate(Cluster = as.numeric(as.character(Cluster))) |> 
 			dplyr::inner_join(df0, by = c("Cluster" = "gene_snn_res.0.2")) |> 
 			dplyr::group_by(Cluster) |> 
 			dplyr::slice_head(n = 5) |> 

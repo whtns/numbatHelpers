@@ -73,7 +73,7 @@ retrieve_numbat_seurat <- function(numbat_rds_file, cluster_dictionary) {
 
   test0 <- seu@meta.data["gene_snn_res.0.2"] %>%
     tibble::rownames_to_column("cell") %>%
-    dplyr::mutate(gene_snn_res.0.2 = as.numeric(gene_snn_res.0.2)) %>%
+    dplyr::mutate(gene_snn_res.0.2 = as.numeric(as.character(gene_snn_res.0.2))) %>%
     dplyr::left_join(cluster_dictionary[[sample_id]], by = "gene_snn_res.0.2") %>%
     dplyr::select("cell", "abbreviation") %>%
     tibble::column_to_rownames("cell")

@@ -83,7 +83,7 @@ find_diffex_bw_clusters_for_each_clone <- function(numbat_rds_file, cluster_dict
 
   test0 <- seu@meta.data["gene_snn_res.0.2"] %>%
     tibble::rownames_to_column("cell") %>%
-    dplyr::mutate(gene_snn_res.0.2 = as.numeric(gene_snn_res.0.2)) %>%
+    dplyr::mutate(gene_snn_res.0.2 = as.numeric(as.character(gene_snn_res.0.2))) %>%
     dplyr::left_join(cluster_dictionary[[sample_id]], by = "gene_snn_res.0.2") %>%
     dplyr::select("cell", "abbreviation") %>%
     tibble::column_to_rownames("cell")
