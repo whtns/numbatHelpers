@@ -321,7 +321,7 @@ make_s9_integration_groups <- function(pairs, min_tumors = 2, expect_iteration =
 #' @param out_dir Output directory
 #' @return Path to <group_id>_filtered_seu.rds
 #' @export
-integrate_s9_group <- function(group_tbl, resolution = "integrated_snn_res.0.4",
+integrate_s9_group <- function(group_tbl, resolution = "integrated_snn_res.0.4", min_cells = 20,
                                out_dir = "output/seurat/integrated_s9") {
   gid <- unique(group_tbl$group_id)
   stopifnot(length(gid) == 1, !anyDuplicated(group_tbl$sample))
@@ -338,11 +338,17 @@ integrate_s9_group <- function(group_tbl, resolution = "integrated_snn_res.0.4",
     drop <- grepl("_snn_res\\.", colnames(seu@meta.data)) |
       colnames(seu@meta.data) %in% c("clusters", "phase_level", "seurat_clusters")
     seu@meta.data <- seu@meta.data[, !drop, drop = FALSE]
-    message(sprintf("  %s: %d with, %d without", r$key, sum(seu$s9_group == "with"), sum(seu$s9_group == "without")))
+    n <- c(sum(seu$s9_group == "with"), sum(seu$s9_group == "without"))
+    message(sprintf("  %s: %d with, %d without", r$key, n[1], n[2]))
     gc()
+    # a pair with almost no cells in one clone breaks IntegrateData (and adds nothing)
+    if (any(n < min_cells)) { message("  dropped: fewer than ", min_cells, " cells in a clone"); return(NULL) }
     seu
   }) |>
     rlang::set_names(group_tbl$sample)
+  dropped <- names(seus)[purrr::map_lgl(seus, is.null)]
+  seus <- purrr::compact(seus)
+  if (length(seus) < 2) stop(gid, ": fewer than 2 tumors with >= ", min_cells, " cells per clone")
 
   seu <- seuratTools::integration_workflow(seus, find_markers = FALSE)
   rm(seus); gc()
@@ -360,6 +366,7 @@ integrate_s9_group <- function(group_tbl, resolution = "integrated_snn_res.0.4",
   seu <- assign_auto_phase_clusters(seu, resolution, seurat_assay = "gene")
   seu$s9_group <- factor(seu$s9_group, levels = c("without", "with"))
   seu$s9_integration <- gid
+  seu@misc$s9_dropped_tumors <- dropped
 
   dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
   path <- file.path(out_dir, paste0(gid, "_filtered_seu.rds"))
@@ -410,6 +417,7 @@ s9_integrated_cluster_diffex <- function(seu_path, group_tbl, min_cells = 20, mi
   seu <- readRDS(seu_path)
   Seurat::DefaultAssay(seu) <- "gene"
   seu$s9_group <- as.character(seu$s9_group)
+  group_tbl <- group_tbl[group_tbl$sample %in% unique(seu$s9_tumor), ]   # tumors left out by integrate_s9_group()
   md <- seu@meta.data
 
   umap <- Seurat::Embeddings(seu, "umap")
@@ -691,7 +699,10 @@ plot_s9_integrations <- function(diffex_paths, groups,
     plots[[gid]] <- (top / comp / bottom) + plot_layout(heights = c(1, 0.6, 1.6)) +
       plot_annotation(
         title = paste("S9 clone-pair integration:", g$group_label[1]),
-        subtitle = paste(sprintf("%s it%d %s", g$sample, g$iteration, g$pair), collapse = "; "),
+        subtitle = paste0(
+          paste(sprintf("%s it%d %s", g$sample, g$iteration, g$pair)[g$sample %in% ce$s9_tumor], collapse = "; "),
+          if (any(!g$sample %in% ce$s9_tumor))
+            paste0("   (left out, < 20 cells in a clone: ", paste(g$sample[!g$sample %in% ce$s9_tumor], collapse = ", "), ")")),
         caption = stringr::str_wrap(paste0(
           "Each tumor contributes the two clones of its S9 pair (CCA integration, seuratTools). Clusters integrated_snn_res.0.4, ",
           "phase-labelled. Pseudobulk: per cluster with >= 2 tumors having >= 20 cells per clone, counts summed per tumor x clone, ",
