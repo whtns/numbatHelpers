@@ -308,6 +308,38 @@ make_s9_integration_groups <- function(pairs, min_tumors = 2, expect_iteration =
   groups
 }
 
+# CCA integration as seuratTools::seurat_integrate(): per-batch preprocessing, small batches
+# merged, FindIntegrationAnchors(dims 1:30, k.filter 50), IntegrateData at k.weight =
+# min(smallest batch - 15, 100). One difference: when IntegrateData fails (too few anchor cells
+# in a small tumor; e.g. page_1q_over_2p_6p, 113 anchors, SRX10031194 375 cells) it retries at
+# a lower k.weight instead of falling back to harmony (not installed). The first attempt is
+# identical, so integrations that succeed in seuratTools come out the same.
+.s9_integrate_cca <- function(seus, k_weights = c(50, 30, 20)) {
+  seus <- purrr::imap(seus, function(s, nm) {
+    s[["gene"]] <- seuratTools::seurat_preprocess(s[["gene"]], scale = TRUE)
+    s$batch <- nm
+    s
+  })
+  seus <- seuratTools::merge_small_seus(seus)
+  if (length(seus) < 2) stop("fewer than 2 batches left after merging small ones")
+  anchors <- Seurat::FindIntegrationAnchors(object.list = seus, dims = 1:30, k.filter = 50)
+  kw0 <- min(min(sapply(seus, ncol)) - 15, 100)
+  res <- NULL
+  for (kw in unique(c(kw0, k_weights[k_weights < kw0]))) {
+    res <- tryCatch(Seurat::IntegrateData(anchorset = anchors, dims = 1:30, k.weight = kw),
+                    error = function(e) e)
+    if (!inherits(res, "error")) break
+    message("IntegrateData failed at k.weight ", kw, ": ", conditionMessage(res))
+  }
+  if (inherits(res, "error")) stop("IntegrateData failed at every k.weight: ", conditionMessage(res))
+  if (kw != kw0) message("integrated at k.weight ", kw, " (default ", kw0, " failed)")
+  res@misc$s9_k_weight <- kw
+  Seurat::Idents(res) <- "batch"
+  res[["batch"]] <- Seurat::Idents(res)
+  Seurat::DefaultAssay(res) <- "integrated"
+  res
+}
+
 #' Integrate the S9 clone pairs of one group
 #'
 #' Each tumor contributes only the cells of its pair's two clones (s9_group = with / without).
@@ -350,7 +382,7 @@ integrate_s9_group <- function(group_tbl, resolution = "integrated_snn_res.0.4",
   seus <- purrr::compact(seus)
   if (length(seus) < 2) stop(gid, ": fewer than 2 tumors with >= ", min_cells, " cells per clone")
 
-  seu <- seuratTools::integration_workflow(seus, find_markers = FALSE)
+  seu <- .s9_integrate_cca(seus)
   rm(seus); gc()
   seu <- Seurat::ScaleData(seu)
   seu <- seuratTools::seurat_reduce_dimensions(seu)
