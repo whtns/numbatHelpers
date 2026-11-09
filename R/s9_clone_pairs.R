@@ -388,7 +388,9 @@ integrate_s9_group <- function(group_tbl, resolution = "integrated_snn_res.0.4",
   seu <- seuratTools::seurat_reduce_dimensions(seu)
   seu <- seuratTools::seurat_cluster(seu, resolution = seq(0.2, 2.0, by = 0.2), seurat_assay = "integrated")
 
-  seu[["gene"]] <- SeuratObject::JoinLayers(seu[["gene"]])
+  # v5 assays come out of integration split one layer per batch; a v3 Assay (e.g.
+  # page_2p_vs_diploid's inputs) has no layers to join
+  if (inherits(seu[["gene"]], "Assay5")) seu[["gene"]] <- SeuratObject::JoinLayers(seu[["gene"]])
   default_assay <- Seurat::DefaultAssay(seu)
   Seurat::DefaultAssay(seu) <- "gene"
   seu <- Seurat::CellCycleScoring(seu, s.features = Seurat::cc.genes.updated.2019$s.genes,
