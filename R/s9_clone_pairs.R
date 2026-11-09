@@ -733,10 +733,10 @@ plot_s9_integrations <- function(diffex_paths, groups,
     plots[[gid]] <- (top / comp / bottom) + plot_layout(heights = c(1, 0.6, 1.6)) +
       plot_annotation(
         title = paste("S9 clone-pair integration:", g$group_label[1]),
-        subtitle = paste0(
+        subtitle = stringr::str_wrap(paste0(
           paste(sprintf("%s it%d %s", g$sample, g$iteration, g$pair)[g$sample %in% ce$s9_tumor], collapse = "; "),
           if (any(!g$sample %in% ce$s9_tumor))
-            paste0("   (left out, < 20 cells in a clone: ", paste(g$sample[!g$sample %in% ce$s9_tumor], collapse = ", "), ")")),
+            paste0("   (left out, < 20 cells in a clone: ", paste(g$sample[!g$sample %in% ce$s9_tumor], collapse = ", "), ")")), 150),
         caption = stringr::str_wrap(paste0(
           "Each tumor contributes the two clones of its S9 pair (CCA integration, seuratTools). Clusters integrated_snn_res.0.4, ",
           "phase-labelled. Pseudobulk: per cluster with >= 2 tumors having >= 20 cells per clone, counts summed per tumor x clone, ",
