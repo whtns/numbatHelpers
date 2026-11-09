@@ -146,7 +146,8 @@ s9_differing_segments <- function(clone_post, joint_post, with, without) {
 #' @param symbols Gene symbols
 #' @param segs Output of s9_differing_segments()
 #' @param acquired Acquired RB SCNAs, e.g. c("1q+", "16q-")
-#' @return tibble symbol, chr, start, end, location (cis / edge_other / trans)
+#' @return tibble symbol, chr, start, end, location (cis / edge_other / trans / unmapped; unmapped = no
+#'   grch38 coordinates, so neither cis nor trans)
 #' @export
 s9_locate_genes <- function(symbols, segs, acquired) {
   genes <- annotables::grch38 |>
@@ -166,8 +167,8 @@ s9_locate_genes <- function(symbols, segs, acquired) {
   other <- setdiff(hit(dplyr::filter(segs, !rb %in% acquired | is.na(rb))), cis)
   tibble::tibble(symbol = symbols) |>
     dplyr::left_join(genes, by = "symbol") |>
-    dplyr::mutate(location = dplyr::case_when(symbol %in% cis ~ "cis", symbol %in% other ~ "edge_other",
-                                              TRUE ~ "trans"))
+    dplyr::mutate(location = dplyr::case_when(is.na(chr) ~ "unmapped", symbol %in% cis ~ "cis",
+                                              symbol %in% other ~ "edge_other", TRUE ~ "trans"))
 }
 
 # Wilcoxon with vs without on the cells of `seu` (assay gene), as the whole-sample S9 test
@@ -620,7 +621,7 @@ plot_s9_cluster_diffex <- function(diffex_paths, pairs,
       dplyr::arrange(sample, iteration, pair, phase_level, clusters) |> dplyr::pull(column)
     d$column <- factor(d$column, levels = unique(lev))
     gain <- !all(stringr::str_detect(stringr::str_split(d$acquired[1], ";")[[1]], "-$"))
-    cis <- dplyr::filter(d, location == "cis"); trans <- dplyr::filter(d, location != "cis")
+    cis <- dplyr::filter(d, location == "cis"); trans <- dplyr::filter(d, !location %in% c("cis", "unmapped"))
     g_cis <- .s9_pick_genes(cis, n_genes, split_sign = !gain)
     g_trans <- .s9_pick_genes(trans, n_genes, split_sign = TRUE)
     nm <- s9_slug(pg)
@@ -641,7 +642,7 @@ plot_s9_cluster_diffex <- function(diffex_paths, pairs,
   sig <- de |> dplyr::filter(p_val_adj <= .S9_P_ADJ_MAX, abs(avg_log2FC) >= .S9_MIN_LOG2FC)
   summary <- counts |>
     dplyr::left_join(
-      sig |> dplyr::mutate(where = ifelse(location == "cis", "cis", "trans"),
+      sig |> dplyr::filter(location != "unmapped") |> dplyr::mutate(where = ifelse(location == "cis", "cis", "trans"),
                            dir = ifelse(avg_log2FC > 0, "up", "down")) |>
         dplyr::count(key, clusters, where, dir) |>
         tidyr::pivot_wider(names_from = c(where, dir), values_from = n, names_prefix = "n_sig_", values_fill = 0),
@@ -709,7 +710,7 @@ plot_s9_integrations <- function(diffex_paths, groups,
     pbg <- dplyr::filter(pb, group_id == gid) |>
       dplyr::mutate(column = factor(sprintf("%s (n=%d)", clusters, n_tumors),
                                     levels = unique(sprintf("%s (n=%d)", clusters, n_tumors)[order(clusters != "all", match(clusters, lev))])))
-    pb_cis <- dplyr::filter(pbg, n_tumors_cis > 0); pb_trans <- dplyr::filter(pbg, n_tumors_cis == 0 | is.na(n_tumors_cis))
+    pb_cis <- dplyr::filter(pbg, n_tumors_cis > 0); pb_trans <- dplyr::filter(pbg, n_tumors_cis == 0 | is.na(n_tumors_cis), !is.na(chr))
     gain <- !all(stringr::str_detect(stringr::str_split(g$acquired[1], ";")[[1]], "-$"))
     gc_ <- .s9_pick_genes(pb_cis, n_genes, !gain, fc = "log2FoldChange", p = "padj")
     gt_ <- .s9_pick_genes(pb_trans, n_genes, TRUE, fc = "log2FoldChange", p = "padj")
@@ -745,6 +746,7 @@ plot_s9_integrations <- function(diffex_paths, groups,
     sizes[[gid]] <- c(16, 7 + 0.12 * max(length(gc_), length(gt_), length(top_rec)))
     summ[[gid]] <- pbg |>
       dplyr::filter(!is.na(padj), padj <= .S9_P_ADJ_MAX, abs(log2FoldChange) >= .S9_MIN_LOG2FC) |>
+      dplyr::filter(!is.na(chr)) |>
       dplyr::mutate(where = ifelse(n_tumors_cis > 0, "cis", "trans"), dir = ifelse(log2FoldChange > 0, "up", "down")) |>
       dplyr::count(group_id, clusters, n_tumors, where, dir) |>
       tidyr::pivot_wider(names_from = c(where, dir), values_from = n, names_prefix = "n_sig_pb_", values_fill = 0)
