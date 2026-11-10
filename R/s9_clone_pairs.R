@@ -558,14 +558,14 @@ s9_integrated_cluster_diffex <- function(seu_path, group_tbl, min_cells = 20, mi
                                c(TRUE, FALSE), c("yes", "no")),
                   nlp = pmin(-log10(.data[[p]]), nlp_cap), lfc = .data[[fc]]) |>
     ggplot(aes(x = column, y = symbol)) +
-    geom_point(aes(size = nlp, fill = lfc, alpha = sig), shape = 21, stroke = 0.3) +
+    geom_point(aes(size = nlp, fill = lfc, shape = sig), stroke = 0.3) +
     scale_fill_gradient2(low = "#2166AC", mid = "white", high = "#B2182B", name = "log2FC",
                          limits = c(-fc_cap, fc_cap), oob = scales::squish) +
-    scale_alpha_manual(values = c(yes = 1, no = 0.3), name = "significant", drop = FALSE) +
+    scale_shape_manual(values = c(yes = 21, no = 24), limits = c("yes", "no"), name = "significant") +
     scale_size_area(max_size = 4, limits = c(0, nlp_cap), breaks = c(1, 5, 10, 25, 50),
                     name = "-log10 p adj\n(capped at 50)") +
     scale_x_discrete(drop = FALSE) +
-    guides(alpha = guide_legend(override.aes = list(size = 3, fill = "grey50"))) +
+    guides(shape = guide_legend(override.aes = list(size = 3, fill = "grey50"))) +
     labs(title = title, x = NULL, y = NULL) +
     theme_minimal(base_size = 8) +
     theme(axis.text.x = element_text(angle = 60, hjust = 1), panel.grid.major = element_line(linewidth = 0.2))
@@ -584,6 +584,44 @@ s9_integrated_cluster_diffex <- function(seu_path, group_tbl, min_cells = 20, mi
   qpdf::pdf_combine(pdfs, paste0(out_prefix, ".pdf"))
   unlink(pdfs)
   c(paste0(out_prefix, ".pdf"), sprintf("%s_%s.png", out_prefix, names(plots)))
+}
+
+# Clone distribution within each cluster vs the tumor as a whole (issue #52).
+# `d`: one row per unit x cluster with n_with / n_without cells. Per cluster, a 2x2 Fisher test of
+# (with, without) x (this cluster, rest of the unit); BH within each unit. log2_or > 0 = the clone
+# with the SCNA is enriched in the cluster (0.5 added to every cell of the table for the estimate).
+.S9_COMP_P_ADJ_MAX <- 0.05
+.s9_composition_test <- function(d, unit_cols) {
+  d |>
+    dplyr::group_by(dplyr::across(dplyr::all_of(unit_cols))) |>
+    dplyr::mutate(rest_with = sum(n_with) - n_with, rest_without = sum(n_without) - n_without) |>
+    dplyr::ungroup() |>
+    dplyr::mutate(
+      p = purrr::pmap_dbl(list(n_with, n_without, rest_with, rest_without), function(a, b, c, d)
+        stats::fisher.test(matrix(c(a, c, b, d), 2))$p.value),
+      log2_or = log2(((n_with + 0.5) * (rest_without + 0.5)) / ((n_without + 0.5) * (rest_with + 0.5))),
+      frac_with_cluster = n_with / (n_with + n_without),
+      frac_with_unit = (n_with + rest_with) / (n_with + rest_with + n_without + rest_without)) |>
+    dplyr::group_by(dplyr::across(dplyr::all_of(unit_cols))) |>
+    dplyr::mutate(padj = stats::p.adjust(p, "BH")) |>
+    dplyr::ungroup() |>
+    dplyr::mutate(sig = factor(padj <= .S9_COMP_P_ADJ_MAX, c(TRUE, FALSE), c("yes", "no")))
+}
+
+# Bubble grid: x = cluster, y = unit (tumor or pair); fill = log2 odds ratio, shape = significance
+.s9_composition_plot <- function(ct, y, title) {
+  if (nrow(ct) == 0) return(ggplot() + theme_void() + labs(title = title, subtitle = "no clusters"))
+  ggplot(ct, aes(x = clusters, y = .data[[y]])) +
+    geom_point(aes(size = n_with + n_without, fill = log2_or, shape = sig), stroke = 0.3) +
+    scale_shape_manual(values = c(yes = 21, no = 24), limits = c("yes", "no"),
+                       name = "composition\nFisher p adj <= 0.05") +
+    scale_fill_gradient2(low = "#2166AC", mid = "white", high = "#B2182B", limits = c(-3, 3),
+                         oob = scales::squish, name = "log2 odds ratio\n(with SCNA,\ncluster vs rest)") +
+    scale_size_area(max_size = 4, name = "cells in cluster") +
+    scale_x_discrete(drop = FALSE) +
+    labs(title = title, x = NULL, y = NULL) +
+    theme_minimal(base_size = 8) +
+    theme(axis.text.x = element_text(angle = 60, hjust = 1), panel.grid.major = element_line(linewidth = 0.2))
 }
 
 # Read and bind CSVs, skipping zero-row tables (they come back all-character)
@@ -613,6 +651,11 @@ plot_s9_cluster_diffex <- function(diffex_paths, pairs,
                            col_types = readr::cols(clusters = "c", error = "c"))
   if (nrow(de) == 0) stop("no cluster was tested in any S9 pair")
   de <- de |> dplyr::mutate(column = sprintf("%s it%d %s\n%s", sample, iteration, pair, clusters))
+  # clone distribution in each cluster vs the whole tumor, over every cluster (tested or not)
+  comp <- counts |>
+    dplyr::transmute(key, sample, page, clusters, phase_level, n_with = cells_with, n_without = cells_without) |>
+    .s9_composition_test("key") |>
+    dplyr::mutate(unit = stringr::str_replace(key, "^(SR[RX][0-9]+)_it([0-9]+)_", "\\1 it\\2 "))
   plots <- list(); sizes <- list()
   for (pg in unique(pairs$page)) {
     d <- dplyr::filter(de, page == pg)
@@ -625,18 +668,26 @@ plot_s9_cluster_diffex <- function(diffex_paths, pairs,
     g_cis <- .s9_pick_genes(cis, n_genes, split_sign = !gain)
     g_trans <- .s9_pick_genes(trans, n_genes, split_sign = TRUE)
     nm <- s9_slug(pg)
-    plots[[nm]] <- (.s9_bubble(cis, g_cis, "cis (in the acquired RB SCNA segments)") |
-                      .s9_bubble(trans, g_trans, "outside them")) +
-      plot_layout(guides = "collect") +
+    cp <- dplyr::filter(comp, page == pg)
+    cp$clusters <- factor(cp$clusters, levels = unique(cp$clusters[order(cp$phase_level, cp$clusters)]))
+    cp$unit <- factor(cp$unit, levels = rev(sort(unique(cp$unit))))
+    comp_plot <- .s9_composition_plot(cp, "unit",
+      "clone distribution in each cluster vs the whole tumor (all clusters, tested or not)")
+    n_units <- nlevels(cp$unit)
+    plots[[nm]] <- ((.s9_bubble(cis, g_cis, "cis (in the acquired RB SCNA segments)") |
+                       .s9_bubble(trans, g_trans, "outside them")) / comp_plot) +
+      plot_layout(guides = "collect", heights = c(max(length(g_cis), length(g_trans), 8), n_units + 4)) +
       plot_annotation(
         title = paste("Fig. S9 within-cluster clone diffex:", pg),
         caption = stringr::str_wrap(paste0(
           "Clone with the SCNA vs its comparison clone inside each cluster (", d$resolution[1],
           ", phase-labelled) with >= 20 cells per clone; Wilcoxon, assay gene. Genes significant (p adj <= 0.1, ",
-          "|log2FC| >= 0.5) in the most columns, then by mean |log2FC|; faded = not significant there."), 160),
+          "|log2FC| >= 0.5) in the most columns, then by mean |log2FC|; circles = significant there, triangles = not. ",
+          "Bottom: per cluster, Fisher test of clone (with / without) x (this cluster / rest of the tumor's S9 pair cells), ",
+          "BH within the pair; log2 odds ratio > 0 = the clone with the SCNA is over-represented in the cluster."), 160),
         theme = theme(plot.caption = element_text(hjust = 0)))
     sizes[[nm]] <- c(max(9, 2 * (3 + 0.28 * nlevels(d$column))),
-                     max(5, 2.8 + 0.12 * max(length(g_cis), length(g_trans))))
+                     max(5, 2.8 + 0.12 * max(length(g_cis), length(g_trans))) + 0.12 * (n_units + 4) + 0.8)
   }
   out <- .s9_save_pages(plots, sizes, out_prefix)
   sig <- de |> dplyr::filter(p_val_adj <= .S9_P_ADJ_MAX, abs(avg_log2FC) >= .S9_MIN_LOG2FC)
@@ -654,8 +705,10 @@ plot_s9_cluster_diffex <- function(diffex_paths, pairs,
       "Each S9 pair (clone with the SCNA vs its comparison clone, t=1e-5 clone_post at the panel's iteration) tested inside each cluster of the filtered object.",
       "Clusters: SCT_snn_res.0.4, phase-labelled by assign_auto_phase_clusters(). Tested when both clones have >= 20 cells there.",
       "Wilcoxon (FindMarkers, assay gene, logfc.threshold 0, min.pct 0.05). Significant: p adj <= 0.1 and |log2FC| >= 0.5; positive = higher with the SCNA.",
-      "Full tables: results/fig_s9_t1e5/cluster_diffex/<sample>_it<r>_<pair>.csv; cells per cluster: <key>_counts.csv.")),
+      "Full tables: results/fig_s9_t1e5/cluster_diffex/<sample>_it<r>_<pair>.csv; cells per cluster: <key>_counts.csv.",
+      "cluster_composition: per pair x cluster, Fisher test of clone (with/without) x (cluster/rest of the pair's cells); BH within pair; significant at p adj <= 0.05; log2_or with 0.5 added to each cell.")),
     clusters = summary,
+    cluster_composition = comp,
     all_significant = sig |> dplyr::select(-column) |> dplyr::arrange(page, key, clusters, location != "cis", p_val_adj)),
     xlsx)
   c(out, xlsx)
@@ -687,7 +740,7 @@ plot_s9_integrations <- function(diffex_paths, groups,
   if (nrow(pb) == 0) pb <- tibble::tibble(group_id = character(), symbol = character(), clusters = character(),
                                           n_tumors = integer(), n_tumors_cis = integer(),
                                           log2FoldChange = double(), padj = double())
-  plots <- list(); sizes <- list(); summ <- list()
+  plots <- list(); sizes <- list(); summ <- list(); comp_list <- list()
   for (gid in unique(groups$group_id)) {
     g <- dplyr::filter(groups, group_id == gid)
     ce <- cells[cells$group_id == gid, ]
@@ -714,24 +767,48 @@ plot_s9_integrations <- function(diffex_paths, groups,
     gain <- !all(stringr::str_detect(stringr::str_split(g$acquired[1], ";")[[1]], "-$"))
     gc_ <- .s9_pick_genes(pb_cis, n_genes, !gain, fc = "log2FoldChange", p = "padj")
     gt_ <- .s9_pick_genes(pb_trans, n_genes, TRUE, fc = "log2FoldChange", p = "padj")
-    rec <- dplyr::filter(pt, group_id == gid, p_val_adj <= .S9_P_ADJ_MAX, abs(avg_log2FC) >= .S9_MIN_LOG2FC) |>
-      dplyr::group_by(symbol, clusters, location) |>
+    # per-tumor Wilcoxon recurrence, cis and outside cis as separate plots (issue #52)
+    rec <- dplyr::filter(pt, group_id == gid, p_val_adj <= .S9_P_ADJ_MAX, abs(avg_log2FC) >= .S9_MIN_LOG2FC,
+                         location != "unmapped") |>
+      dplyr::mutate(where = ifelse(location == "cis", "cis", "trans")) |>
+      dplyr::group_by(symbol, clusters, where) |>
       dplyr::summarise(n_tumors = dplyr::n_distinct(s9_tumor), m = mean(avg_log2FC), .groups = "drop")
-    top_rec <- rec |> dplyr::group_by(symbol) |> dplyr::summarise(r = max(n_tumors), a = mean(abs(m))) |>
-      dplyr::arrange(dplyr::desc(r), dplyr::desc(a)) |> utils::head(n_genes) |> dplyr::pull(symbol)
-    rec_plot <- if (length(top_rec) == 0) ggplot() + theme_void() + labs(title = "per-tumor recurrence", subtitle = "no significant genes") else
-      rec |> dplyr::filter(symbol %in% top_rec) |>
-      dplyr::mutate(symbol = factor(symbol, levels = rev(top_rec)), clusters = factor(clusters, levels = lev)) |>
-      ggplot(aes(clusters, symbol, size = n_tumors, fill = m, shape = location == "cis")) +
-      geom_point(stroke = 0.3) + scale_shape_manual(values = c(`TRUE` = 21, `FALSE` = 22), name = "cis") +
-      scale_fill_gradient2(low = "#2166AC", mid = "white", high = "#B2182B", name = "mean log2FC", limits = c(-3, 3), oob = scales::squish) +
-      scale_size_area(max_size = 4, name = "tumors significant") +
-      labs(title = "per-tumor Wilcoxon: tumors significant per cluster", x = NULL, y = NULL) +
-      theme_minimal(base_size = 8) + theme(axis.text.x = element_text(angle = 60, hjust = 1))
+    rec_bubble <- function(r, title) {
+      top_r <- r |> dplyr::group_by(symbol) |> dplyr::summarise(rr = max(n_tumors), a = mean(abs(m))) |>
+        dplyr::arrange(dplyr::desc(rr), dplyr::desc(a)) |> utils::head(n_genes) |> dplyr::pull(symbol)
+      if (length(top_r) == 0)
+        return(list(plot = ggplot() + theme_void() + labs(title = title, subtitle = "no significant genes"), n = 0))
+      p <- r |> dplyr::filter(symbol %in% top_r) |>
+        dplyr::mutate(symbol = factor(symbol, levels = rev(top_r)), clusters = factor(clusters, levels = lev)) |>
+        ggplot(aes(clusters, symbol, size = n_tumors, fill = m)) +
+        geom_point(shape = 21, stroke = 0.3) +
+        scale_fill_gradient2(low = "#2166AC", mid = "white", high = "#B2182B", name = "mean log2FC", limits = c(-3, 3), oob = scales::squish) +
+        scale_size_area(max_size = 4, name = "tumors significant") +
+        scale_x_discrete(drop = FALSE) +
+        labs(title = title, x = NULL, y = NULL) +
+        theme_minimal(base_size = 8) + theme(axis.text.x = element_text(angle = 60, hjust = 1))
+      list(plot = p, n = length(top_r))
+    }
+    rec_cis <- rec_bubble(dplyr::filter(rec, where == "cis"), "per-tumor Wilcoxon, cis: tumors significant per cluster")
+    rec_trans <- rec_bubble(dplyr::filter(rec, where == "trans"), "per-tumor Wilcoxon, outside cis: tumors significant per cluster")
+    # clone distribution in each integrated cluster vs the tumor as a whole
+    cp <- ce |>
+      dplyr::filter(!is.na(s9_group)) |>
+      dplyr::group_by(s9_tumor, clusters) |>
+      dplyr::summarise(n_with = sum(s9_group == "with"), n_without = sum(s9_group == "without"), .groups = "drop") |>
+      dplyr::filter(n_with + n_without > 0) |>
+      .s9_composition_test("s9_tumor") |>
+      dplyr::mutate(group_id = gid, clusters = factor(clusters, levels = lev))
+    comp_list[[gid]] <- cp
+    cp$s9_tumor <- factor(cp$s9_tumor, levels = rev(sort(unique(cp$s9_tumor))))
+    comp_test <- .s9_composition_plot(cp, "s9_tumor", "clone distribution per cluster vs the whole tumor")
     top <- um("clusters", "clusters") | um("s9_group", "clone") | um("s9_tumor", "tumor")
-    bottom <- .s9_bubble(pb_cis, gc_, "pseudobulk: cis in >= 1 tumor", "log2FoldChange", "padj") |
-      .s9_bubble(pb_trans, gt_, "pseudobulk: outside cis", "log2FoldChange", "padj") | rec_plot
-    plots[[gid]] <- (top / comp / bottom) + plot_layout(heights = c(1, 0.6, 1.6)) +
+    pb_row <- .s9_bubble(pb_cis, gc_, "pseudobulk: cis in >= 1 tumor", "log2FoldChange", "padj") |
+      .s9_bubble(pb_trans, gt_, "pseudobulk: outside cis", "log2FoldChange", "padj")
+    rec_row <- rec_cis$plot | rec_trans$plot
+    n_pb <- max(length(gc_), length(gt_), 8); n_rec <- max(rec_cis$n, rec_trans$n, 8)
+    plots[[gid]] <- (top / (comp | comp_test) / pb_row / rec_row) +
+      plot_layout(heights = c(1, 0.7, 0.04 * n_pb + 0.4, 0.04 * n_rec + 0.4)) +
       plot_annotation(
         title = paste("S9 clone-pair integration:", g$group_label[1]),
         subtitle = stringr::str_wrap(paste0(
@@ -741,9 +818,11 @@ plot_s9_integrations <- function(diffex_paths, groups,
         caption = stringr::str_wrap(paste0(
           "Each tumor contributes the two clones of its S9 pair (CCA integration, seuratTools). Clusters integrated_snn_res.0.4, ",
           "phase-labelled. Pseudobulk: per cluster with >= 2 tumors having >= 20 cells per clone, counts summed per tumor x clone, ",
-          "DESeq2 ~ tumor + group; 'all' = every cell. Significant: p adj <= 0.1, |log2FC| >= 0.5; positive = higher with the SCNA."), 180),
+          "DESeq2 ~ tumor + group; 'all' = every cell. Significant: p adj <= 0.1, |log2FC| >= 0.5; positive = higher with the SCNA; ",
+          "circles = significant, triangles = not. Composition test: per tumor x integrated cluster, Fisher test of clone (with / without) x ",
+          "(this cluster / rest of the tumor's cells), BH within tumor; log2 odds ratio > 0 = the clone with the SCNA is over-represented."), 180),
         theme = theme(plot.caption = element_text(hjust = 0)))
-    sizes[[gid]] <- c(16, 7 + 0.12 * max(length(gc_), length(gt_), length(top_rec)))
+    sizes[[gid]] <- c(16, 7 + 0.12 * (n_pb + n_rec))
     summ[[gid]] <- pbg |>
       dplyr::filter(!is.na(padj), padj <= .S9_P_ADJ_MAX, abs(log2FoldChange) >= .S9_MIN_LOG2FC) |>
       dplyr::filter(!is.na(chr)) |>
@@ -758,9 +837,11 @@ plot_s9_integrations <- function(diffex_paths, groups,
       "Groups: each S9 page with >= 2 tumors (page_*), and each RB SCNA acquired without another RB SCNA (alone_*). One pair per tumor.",
       "Clusters: integrated_snn_res.0.4, phase-labelled. per_tumor: Wilcoxon per (cluster, tumor) with >= 20 cells per clone.",
       "pseudobulk: DESeq2 ~ tumor + group per cluster with >= 2 such tumors; 'all' = all cells. n_tumors_cis = tumors where the gene is cis.",
+      "cluster_composition: per tumor x integrated cluster, Fisher test of clone (with/without) x (cluster/rest of the tumor); BH within tumor; significant at p adj <= 0.05.",
       "Full tables: results/fig_s9_t1e5/integrated/<group_id>_{per_tumor,pseudobulk,counts}.csv; objects: output/seurat/integrated_s9/.")),
     groups = groups |> dplyr::select(group_id, group_label, group_kind, sample, iteration, pair, acquired, page, background, key),
     cells_per_cluster = ct,
+    cluster_composition = dplyr::bind_rows(comp_list) |> dplyr::mutate(clusters = as.character(clusters)),
     pseudobulk_sig_counts = dplyr::bind_rows(summ),
     pseudobulk_significant = pb |> dplyr::filter(!is.na(padj), padj <= .S9_P_ADJ_MAX, abs(log2FoldChange) >= .S9_MIN_LOG2FC) |>
       dplyr::arrange(group_id, clusters, padj)),
