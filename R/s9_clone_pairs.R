@@ -575,6 +575,8 @@ s9_integrated_cluster_diffex <- function(seu_path, group_tbl, min_cells = 20, mi
   dir.create(dirname(out_prefix), recursive = TRUE, showWarnings = FALSE)
   pdfs <- character()
   for (nm in names(plots)) {
+    if (inherits(plots[[nm]], "patchwork"))   # bold panel letters on every subplot (#53)
+      plots[[nm]] <- plots[[nm]] & theme(plot.tag = element_text(size = 12, face = "bold"))
     ggsave(sprintf("%s_%s.png", out_prefix, nm), plots[[nm]], width = sizes[[nm]][1],
            height = sizes[[nm]][2], dpi = 150, bg = "white", limitsize = FALSE)
     pdfs[nm] <- tempfile(tmpdir = Sys.getenv("TMPDIR", tempdir()), fileext = ".pdf")
@@ -608,20 +610,36 @@ s9_integrated_cluster_diffex <- function(seu_path, group_tbl, min_cells = 20, mi
     dplyr::mutate(sig = factor(padj <= .S9_COMP_P_ADJ_MAX, c(TRUE, FALSE), c("yes", "no")))
 }
 
-# Bubble grid: x = cluster, y = unit (tumor or pair); fill = log2 odds ratio, shape = significance
+# Bubble grid: x = cluster, y = unit (tumor or pair). Size = |log2 odds ratio| (independent of the
+# unit's cell number, so units of different sizes compare); fill = signed -log10 p adj (red = the
+# clone with the SCNA enriched in the cluster, blue = depleted); black outline = p adj <= 0.05 (#53).
+.S9_COMP_LOR_CAP <- 4
+.S9_COMP_NLP_CAP <- 10
 .s9_composition_plot <- function(ct, y, title) {
   if (nrow(ct) == 0) return(ggplot() + theme_void() + labs(title = title, subtitle = "no clusters"))
+  # cells per unit in the y labels
+  n_unit <- tapply(ct$n_with + ct$n_without, as.character(ct[[y]]), sum)
+  ct[[y]] <- factor(ct[[y]])
+  lv <- levels(ct[[y]])
+  ct[[y]] <- factor(sprintf("%s (n=%d)", ct[[y]], n_unit[as.character(ct[[y]])]),
+                    levels = sprintf("%s (n=%d)", lv, n_unit[lv]))
+  ct <- ct |> dplyr::mutate(abs_lor = pmin(abs(log2_or), .S9_COMP_LOR_CAP),
+                            snlp = sign(log2_or) * pmin(-log10(padj), .S9_COMP_NLP_CAP),
+                            outline = ifelse(sig == "yes", "black", "grey70"))
   ggplot(ct, aes(x = clusters, y = .data[[y]])) +
-    geom_point(aes(size = n_with + n_without, fill = log2_or, shape = sig), stroke = 0.3) +
-    scale_shape_manual(values = c(yes = 21, no = 24), limits = c("yes", "no"),
-                       name = "composition\nFisher p adj <= 0.05") +
-    scale_fill_gradient2(low = "#2166AC", mid = "white", high = "#B2182B", limits = c(-3, 3),
-                         oob = scales::squish, name = "log2 odds ratio\n(with SCNA,\ncluster vs rest)") +
-    scale_size_area(max_size = 4, name = "cells in cluster") +
+    geom_point(aes(size = abs_lor, fill = snlp, colour = outline), shape = 21, stroke = 0.4) +
+    scale_colour_identity() +
+    scale_fill_gradient2(low = "#2166AC", mid = "white", high = "#B2182B",
+                         limits = c(-.S9_COMP_NLP_CAP, .S9_COMP_NLP_CAP), oob = scales::squish,
+                         breaks = c(-10, -5, 0, 5, 10),
+                         name = "signed -log10\nFisher p adj\n(+ = enriched\nwith SCNA;\n|1.3| = 0.05)") +
+    scale_size_area(max_size = 4, limits = c(0, .S9_COMP_LOR_CAP), breaks = c(0.5, 1, 2, 4),
+                    name = "|log2 odds ratio|\n(capped at 4;\nblack outline =\np adj <= 0.05)") +
     scale_x_discrete(drop = FALSE) +
     labs(title = title, x = NULL, y = NULL) +
     theme_minimal(base_size = 8) +
-    theme(axis.text.x = element_text(angle = 60, hjust = 1), panel.grid.major = element_line(linewidth = 0.2))
+    theme(axis.text.x = element_text(angle = 60, hjust = 1), panel.grid.major = element_line(linewidth = 0.2),
+          legend.box = "horizontal", legend.key.height = grid::unit(0.35, "cm"))
 }
 
 # Read and bind CSVs, skipping zero-row tables (they come back all-character)
@@ -679,15 +697,22 @@ plot_s9_cluster_diffex <- function(diffex_paths, pairs,
       plot_layout(guides = "collect", heights = c(max(length(g_cis), length(g_trans), 8), n_units + 4)) +
       plot_annotation(
         title = paste("Fig. S9 within-cluster clone diffex:", pg),
+        tag_levels = "A",
         caption = stringr::str_wrap(paste0(
           "Clone with the SCNA vs its comparison clone inside each cluster (", d$resolution[1],
-          ", phase-labelled) with >= 20 cells per clone; Wilcoxon, assay gene. Genes significant (p adj <= 0.1, ",
-          "|log2FC| >= 0.5) in the most columns, then by mean |log2FC|; circles = significant there, triangles = not. ",
-          "Bottom: per cluster, Fisher test of clone (with / without) x (this cluster / rest of the tumor's S9 pair cells), ",
-          "BH within the pair; log2 odds ratio > 0 = the clone with the SCNA is over-represented in the cluster."), 160),
+          ", phase-labelled) with >= 20 cells per clone; Wilcoxon, assay gene. Columns = pair x cluster. ",
+          "(A) Genes in the acquired RB SCNA segments (cis) and (B) genes outside them. Gene selection: genes significant ",
+          "(p adj <= 0.1, |log2FC| >= 0.5) in >= 1 column, ranked by the number of columns where significant, then by mean |log2FC|; ",
+          "the top ", n_genes, if (gain) " in A" else "", if (gain) paste0(" and the top ", n_genes / 2, " up and ", n_genes / 2,
+          " down in B" ) else paste0(" (", n_genes / 2, " up and ", n_genes / 2, " down) in A and B"), ". ",
+          "Rows are ordered by mean log2FC across columns, highest at the top. Fill = log2FC (positive = higher with the SCNA), ",
+          "size = -log10 p adj; circles = significant in that column, triangles = not. ",
+          "(C) Per cluster, Fisher test of clone (with / without) x (this cluster / rest of the tumor's S9 pair cells), ",
+          "BH within the pair; size = |log2 odds ratio|, fill = signed -log10 p adj (red = the clone with the SCNA over-represented), ",
+          "black outline = p adj <= 0.05."), 160),
         theme = theme(plot.caption = element_text(hjust = 0)))
     sizes[[nm]] <- c(max(9, 2 * (3 + 0.28 * nlevels(d$column))),
-                     max(5, 2.8 + 0.12 * max(length(g_cis), length(g_trans))) + 0.12 * (n_units + 4) + 0.8)
+                     max(9, max(5, 2.8 + 0.12 * max(length(g_cis), length(g_trans))) + 0.12 * (n_units + 4) + 1.4))
   }
   out <- .s9_save_pages(plots, sizes, out_prefix)
   sig <- de |> dplyr::filter(p_val_adj <= .S9_P_ADJ_MAX, abs(avg_log2FC) >= .S9_MIN_LOG2FC)
@@ -758,12 +783,15 @@ plot_s9_integrations <- function(diffex_paths, groups,
       dplyr::mutate(clusters = factor(clusters, levels = lev),
                     s9_group = factor(s9_group, levels = c("without", "with"))) |>
       ggplot(aes(x = s9_group, y = frac, fill = clusters)) + geom_col(width = 0.8) +
-      facet_wrap(~s9_tumor, nrow = 1) + labs(title = "cluster composition by clone", x = NULL, y = "fraction of cells") +
-      theme_minimal(base_size = 8)
+      facet_wrap(~s9_tumor, nrow = 1) + labs(title = "cluster composition by clone", x = NULL, y = "fraction of cells", fill = NULL) +
+      theme_minimal(base_size = 8) + theme(legend.position = "bottom", legend.key.size = grid::unit(0.3, "cm")) +
+      guides(fill = guide_legend(nrow = 1))
     pbg <- dplyr::filter(pb, group_id == gid) |>
       dplyr::mutate(column = factor(sprintf("%s (n=%d)", clusters, n_tumors),
                                     levels = unique(sprintf("%s (n=%d)", clusters, n_tumors)[order(clusters != "all", match(clusters, lev))])))
-    pb_cis <- dplyr::filter(pbg, n_tumors_cis > 0); pb_trans <- dplyr::filter(pbg, n_tumors_cis == 0 | is.na(n_tumors_cis), !is.na(chr))
+    # the pooled 'all' column is kept in the xlsx but not plotted: its p values dwarf the per-cluster ones (#53)
+    pbp <- dplyr::filter(pbg, clusters != "all") |> dplyr::mutate(column = droplevels(column))
+    pb_cis <- dplyr::filter(pbp, n_tumors_cis > 0); pb_trans <- dplyr::filter(pbp, n_tumors_cis == 0 | is.na(n_tumors_cis), !is.na(chr))
     gain <- !all(stringr::str_detect(stringr::str_split(g$acquired[1], ";")[[1]], "-$"))
     gc_ <- .s9_pick_genes(pb_cis, n_genes, !gain, fc = "log2FoldChange", p = "padj")
     gt_ <- .s9_pick_genes(pb_trans, n_genes, TRUE, fc = "log2FoldChange", p = "padj")
@@ -773,6 +801,7 @@ plot_s9_integrations <- function(diffex_paths, groups,
       dplyr::mutate(where = ifelse(location == "cis", "cis", "trans")) |>
       dplyr::group_by(symbol, clusters, where) |>
       dplyr::summarise(n_tumors = dplyr::n_distinct(s9_tumor), m = mean(avg_log2FC), .groups = "drop")
+    max_n <- max(1L, dplyr::n_distinct(ce$s9_tumor))
     rec_bubble <- function(r, title) {
       top_r <- r |> dplyr::group_by(symbol) |> dplyr::summarise(rr = max(n_tumors), a = mean(abs(m))) |>
         dplyr::arrange(dplyr::desc(rr), dplyr::desc(a)) |> utils::head(n_genes) |> dplyr::pull(symbol)
@@ -783,7 +812,8 @@ plot_s9_integrations <- function(diffex_paths, groups,
         ggplot(aes(clusters, symbol, size = n_tumors, fill = m)) +
         geom_point(shape = 21, stroke = 0.3) +
         scale_fill_gradient2(low = "#2166AC", mid = "white", high = "#B2182B", name = "mean log2FC", limits = c(-3, 3), oob = scales::squish) +
-        scale_size_area(max_size = 4, name = "tumors significant") +
+        scale_size_area(max_size = 5, limits = c(0, max_n), breaks = seq_len(max_n), labels = seq_len(max_n),
+                        name = "tumors significant") +
         scale_x_discrete(drop = FALSE) +
         labs(title = title, x = NULL, y = NULL) +
         theme_minimal(base_size = 8) + theme(axis.text.x = element_text(angle = 60, hjust = 1))
@@ -807,22 +837,33 @@ plot_s9_integrations <- function(diffex_paths, groups,
       .s9_bubble(pb_trans, gt_, "pseudobulk: outside cis", "log2FoldChange", "padj")
     rec_row <- rec_cis$plot | rec_trans$plot
     n_pb <- max(length(gc_), length(gt_), 8); n_rec <- max(rec_cis$n, rec_trans$n, 8)
+    h_comp <- max(1.1, 0.09 * dplyr::n_distinct(ce$s9_tumor) + 0.5)
     plots[[gid]] <- (top / (comp | comp_test) / pb_row / rec_row) +
-      plot_layout(heights = c(1, 0.7, 0.04 * n_pb + 0.4, 0.04 * n_rec + 0.4)) +
+      plot_layout(heights = c(1, h_comp, 0.04 * n_pb + 0.4, 0.04 * n_rec + 0.4)) +
       plot_annotation(
         title = paste("S9 clone-pair integration:", g$group_label[1]),
         subtitle = stringr::str_wrap(paste0(
           paste(sprintf("%s it%d %s", g$sample, g$iteration, g$pair)[g$sample %in% ce$s9_tumor], collapse = "; "),
           if (any(!g$sample %in% ce$s9_tumor))
             paste0("   (left out, < 20 cells in a clone: ", paste(g$sample[!g$sample %in% ce$s9_tumor], collapse = ", "), ")")), 150),
+        tag_levels = "A",
         caption = stringr::str_wrap(paste0(
-          "Each tumor contributes the two clones of its S9 pair (CCA integration, seuratTools). Clusters integrated_snn_res.0.4, ",
-          "phase-labelled. Pseudobulk: per cluster with >= 2 tumors having >= 20 cells per clone, counts summed per tumor x clone, ",
-          "DESeq2 ~ tumor + group; 'all' = every cell. Significant: p adj <= 0.1, |log2FC| >= 0.5; positive = higher with the SCNA; ",
-          "circles = significant, triangles = not. Composition test: per tumor x integrated cluster, Fisher test of clone (with / without) x ",
-          "(this cluster / rest of the tumor's cells), BH within tumor; log2 odds ratio > 0 = the clone with the SCNA is over-represented."), 180),
+          "Each tumor contributes the two clones of its S9 pair (CCA integration, seuratTools). Clusters integrated_snn_res.0.4, phase-labelled. ",
+          "(A-C) UMAP coloured by cluster, clone and tumor. (D) Cluster composition of each tumor's two clones. ",
+          "(E) Per tumor x cluster, Fisher test of clone (with / without) x (this cluster / rest of the tumor's cells), BH within tumor; ",
+          "size = |log2 odds ratio|, fill = signed -log10 p adj (red = the clone with the SCNA over-represented), black outline = p adj <= 0.05. ",
+          "(F, G) Pseudobulk: per cluster with >= 2 tumors having >= 20 cells per clone, counts summed per tumor x clone, DESeq2 ~ tumor + group; ",
+          "column label n = tumors. (F) genes inside a differing segment of >= 1 tumor (cis); (G) genes outside every tumor's segments. ",
+          "Gene selection: significant (p adj <= 0.1, |log2FC| >= 0.5) in >= 1 cluster, ranked by the number of clusters where significant, then mean |log2FC|; ",
+          "top ", n_genes, if (gain) " in F" else paste0(" (", n_genes / 2, " up, ", n_genes / 2, " down) in F"),
+          ", top ", n_genes / 2, " up and ", n_genes / 2, " down in G. Rows ordered by mean log2FC across clusters, highest at the top. ",
+          "Fill = log2FC (positive = higher with the SCNA), size = -log10 p adj; circles = significant, triangles = not. ",
+          "(H, I) Per-tumor Wilcoxon in each cluster with >= 20 cells per clone, (H) cis and (I) outside cis in that tumor. ",
+          "Gene selection: significant (p adj <= 0.1, |log2FC| >= 0.5) in >= 1 tumor x cluster; ranked by the most tumors significant in any one cluster, ",
+          "then mean |log2FC|; top ", n_genes, ", rows in that rank order, highest at the top. Size = tumors significant in the cluster, ",
+          "fill = their mean log2FC."), 180),
         theme = theme(plot.caption = element_text(hjust = 0)))
-    sizes[[gid]] <- c(16, 7 + 0.12 * (n_pb + n_rec))
+    sizes[[gid]] <- c(16, 7.8 + 2.4 * (h_comp - 0.7) + 0.12 * (n_pb + n_rec))
     summ[[gid]] <- pbg |>
       dplyr::filter(!is.na(padj), padj <= .S9_P_ADJ_MAX, abs(log2FoldChange) >= .S9_MIN_LOG2FC) |>
       dplyr::filter(!is.na(chr)) |>
