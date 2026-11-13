@@ -643,7 +643,8 @@ read_all_hypoxia_scores <- function(files) {
 
 assemble_diploid_seu <- function(filtered_seus_paths,
                                  out_path = "output/seurat/diploid_seu.rds",
-                                 integrate = TRUE) {
+                                 integrate = TRUE,
+                                 include_pr_precursor = TRUE) {
   paths <- unlist(filtered_seus_paths)
   paths <- paths[!is.na(paths)]
   sample_ids <- stringr::str_extract(paths, "SR[RX][0-9]+")
@@ -695,7 +696,11 @@ assemble_diploid_seu <- function(filtered_seus_paths,
       # "Cones". Testing only the plural made this mask always FALSE, every
       # sample return NULL, and the function error out on the empty list; that
       # is why ks_diploid_seu never produced anything. (github #44)
-      cone_mask <- tolower(seu$type) %in% c("cone", "cones")
+      # Photoreceptor precursors are included by default (issue #54, 2026-11-12): the
+      # cone-vs-precursor split of this cluster-level call is not reliable, and
+      # excluding them drops most diploid cone-lineage cells. include_pr_precursor =
+      # FALSE restores the cone-only selection.
+      cone_mask <- tolower(seu$type) %in% composite_celltypes(include_pr_precursor)
       if (!any(cone_mask)) return(NULL)
       seu[, cone_mask]
     })
@@ -798,3 +803,16 @@ add_phase_to_filtered_seu <- function(seu_path, organism = "human") {
   seu_path
 }
 
+
+
+#' Cell-type labels accepted into the composite diploid
+#'
+#' Lower-case plae labels, both spellings (plot_celltype_predictions() assigns the
+#' singular; objects carrying an older whole-object `type` column have the plural).
+#' @param include_pr_precursor Include photoreceptor precursors (default TRUE, issue #54).
+#' @return Character vector of lower-case labels.
+#' @export
+composite_celltypes <- function(include_pr_precursor = TRUE) {
+  c("cone", "cones",
+    if (include_pr_precursor) c("photoreceptor precursor", "photoreceptor precursors"))
+}
