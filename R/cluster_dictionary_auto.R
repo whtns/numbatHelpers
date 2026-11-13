@@ -270,7 +270,7 @@ build_cluster_dictionary <- function(seu_files,
                                      sqlite_path = "batch_hashes.sqlite",
                                      malat1_rank_max = 5,
                                      top_n = 10,
-                                     remove_programs = c("rod", "cone", "APOE", "low_qual", "MALAT1"),
+                                     remove_programs = c("rod", "APOE", "low_qual", "MALAT1"),
                                      write_audit_dir = NULL,
                                      compare_to = NULL,
                                      .db_ready = NULL) {
