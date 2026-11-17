@@ -217,3 +217,24 @@ celltype_meta_cols <- function() {
   c("celltype_m2", "celltype_m2_r", "celltype_m2_margin", "celltype_m2_group", "celltype_exclude",
     paste0("celltype_pos_", names(celltype_marker_panels())))
 }
+
+#' Fixed, high-contrast colours for the plae 30-type M2 calls
+#'
+#' Glasbey colours (pals::glasbey) with near-black entries dropped, assigned in lineage order so a
+#' type has the same colour in every panel and every sample. "other (<0.2%)" and "no call" are
+#' grey.
+#' @return Named character vector of colours.
+#' @export
+celltype_m2_palette <- function() {
+  types <- c(
+    "Cones", "Photoreceptor Precursors", "Early RPCs", "RPCs", "Late RPCs", "Neurogenic Cells",
+    "Horizontal Cells", "AC/HC_Precurs", "Amacrine Cells", "Retinal Ganglion Cells",
+    "Rods", "Bipolar Cells", "Rod Bipolar Cells", "Red Blood Cells", "Microglia",
+    "Macrophage", "Monocyte", "T-Cell", "B-Cell", "Natural Killer", "Mast",
+    "Muller Glia", "Astrocytes", "Endothelial", "Pericytes", "Fibroblasts", "Vein",
+    "Schwann", "Melanocytes", "RPE")
+  g <- pals::glasbey(32)
+  g <- g[!g %in% c("#000033", "#201A01")]
+  c(stats::setNames(g[seq_along(types)], types),
+    "other (<0.2%)" = "grey80", "no call" = "grey80")
+}

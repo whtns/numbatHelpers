@@ -681,8 +681,8 @@ plot_effect_of_filtering <- function(unfiltered_seu_path, filtered_seu_path = NU
     lvl_order <- c(setdiff(lvl_order, c("other (<0.2%)", "no call")),
                    intersect(c("other (<0.2%)", "no call"), lvl_order))
     unfiltered_seu@meta.data$celltype_m2_fine <- factor(fine_lab, levels = lvl_order)
-    fine_cols <- setNames(scales::hue_pal()(length(lvl_order)), lvl_order)
-    fine_cols[intersect(c("other (<0.2%)", "no call"), lvl_order)] <- "grey80"
+    pal <- celltype_m2_palette()
+    fine_cols <- setNames(ifelse(lvl_order %in% names(pal), pal[lvl_order], "grey60"), lvl_order)
 
     # non-photoreceptor types, each named (ganglion, amacrine, horizontal, Muller, astrocyte, ...)
     np_groups <- c("other_retinal", "bipolar", "rbc", "microglia", "other_immune",
@@ -694,23 +694,31 @@ plot_effect_of_filtering <- function(unfiltered_seu_path, filtered_seu_path = NU
     np_lvls <- c(sort(setdiff(unique(np_lab), "photoreceptor lineage / RPC / neurogenic")),
                  "photoreceptor lineage / RPC / neurogenic")
     unfiltered_seu@meta.data$celltype_m2_nonpr <- factor(np_lab, levels = np_lvls)
-    np_cols <- setNames(c(scales::hue_pal()(length(np_lvls) - 1), "grey90"), np_lvls)
+    np_type <- sub(" \\([0-9]+\\)$", "", np_lvls)
+    np_cols <- setNames(ifelse(np_type %in% names(pal), pal[np_type], "grey92"), np_lvls)
+
+    # one-column legend, small text
+    leg <- list(
+      ggplot2::guides(colour = ggplot2::guide_legend(ncol = 1, override.aes = list(size = 2))),
+      ggplot2::theme(legend.text = ggplot2::element_text(size = 6),
+                     legend.key.size = grid::unit(8, "pt"),
+                     legend.title = ggplot2::element_blank()))
 
     tmp_path <- tempfile(fileext = ".pdf")
     ct_ok <- tryCatch({
       p_ct <- patchwork::wrap_plots(
-        DimPlot(unfiltered_seu, group.by = "celltype_m2_fine", cols = fine_cols) +
-          labs(title = "M2 call (plae, 30 types)"),
-        DimPlot(unfiltered_seu, group.by = "celltype_m2_nonpr", cols = np_cols,
+        DimPlot(unfiltered_seu, group.by = "celltype_m2_fine", cols = fine_cols, pt.size = 0.3) +
+          labs(title = "M2 call (plae, 30 types)") + leg,
+        DimPlot(unfiltered_seu, group.by = "celltype_m2_nonpr", cols = np_cols, pt.size = 0.5,
                 order = rev(setdiff(np_lvls, "photoreceptor lineage / RPC / neurogenic"))) +
-          labs(title = "non-photoreceptor M2 calls (cells)"),
-        DimPlot(unfiltered_seu, group.by = "role_label",
+          labs(title = "non-photoreceptor M2 calls (cells)") + leg,
+        DimPlot(unfiltered_seu, group.by = "role_label", pt.size = 0.3,
                 cols = c(tumor = "#1f77b4", diploid = "#2ca02c", no_numbat = "grey70")) +
-          labs(title = "numbat genotype"),
-        DimPlot(unfiltered_seu, group.by = "celltype_outcome", cols = outcome_cols,
+          labs(title = "numbat genotype") + leg,
+        DimPlot(unfiltered_seu, group.by = "celltype_outcome", cols = outcome_cols, pt.size = 0.5,
                 order = c("excluded (call + markers)", "excluded type, no marker support")) +
           labs(title = "cell-type exclusion",
-               subtitle = paste0("excluded: ", paste(names(n_excl), n_excl, sep = " ", collapse = ", "))),
+               subtitle = paste0("excluded: ", paste(names(n_excl), n_excl, sep = " ", collapse = ", "))) + leg,
         ncol = 2) + patchwork::plot_annotation(title = sample_id)
       ggsave(tmp_path, p_ct, height = 10, width = 15)
       TRUE
@@ -907,6 +915,11 @@ plot_effect_of_filtering <- function(unfiltered_seu_path, filtered_seu_path = NU
 
   hm_high_hypoxia <- maybe_heatmap_file(high_hypoxia_seu_path, "high_hypoxia_")
   if (!is.null(hm_high_hypoxia)) plot_list["marker_heatmap_high_hypoxia"] <- hm_high_hypoxia
+
+  # The cell-type page leads the report (user request, 2026-11-16).
+  if ("celltype_umaps" %in% names(plot_list)) {
+    plot_list <- plot_list[c("celltype_umaps", setdiff(names(plot_list), "celltype_umaps"))]
+  }
 
   # Filter to only valid, non-empty PDF files before combining
   valid_pdfs <- Filter(function(f) !is.null(f) && file.exists(f) && file.size(f) > 100L,
