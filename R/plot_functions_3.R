@@ -77,12 +77,22 @@ annotate_filter_reason <- function(
     rep(FALSE, nrow(meta))
   }
 
+  # Cell-type exclusion (annotate_celltype_m2(), #54): a non-photoreceptor-lineage per-cell
+  # call confirmed by its calibrated marker panel, tumor or diploid. Last in priority so the
+  # earlier reasons keep their counts.
+  celltype_remove <- if ("celltype_exclude" %in% colnames(meta)) {
+    !is.na(meta$celltype_exclude) & meta$celltype_exclude
+  } else {
+    rep(FALSE, nrow(meta))
+  }
+
   filter_reason <- dplyr::case_when(
     cluster_remove ~ "cluster_remove",
     clone_missing ~ "clone_opt_na",
     qc_fail ~ "qc_fail",
     malat1_remove ~ "malat1",
     manual_remove ~ "manual_exclude",
+    celltype_remove ~ "celltype_m2",
     TRUE ~ NA_character_
   )
 
@@ -175,15 +185,16 @@ filter_cluster_save_seu <- function(numbat_rds_file, seus, cluster_dictionary, l
          ". Expected columns: filter_reason, filter_keep.")
   }
 
-  scna_meta <- seu@meta.data[seu$filter_reason %in% c("qc_fail", "cluster_remove", "malat1", "manual_exclude") | is.na(seu$filter_reason), ]
-  qc_meta <- seu@meta.data[seu$filter_reason %in% c("cluster_remove", "malat1", "manual_exclude") | is.na(seu$filter_reason), ]
+  scna_meta <- seu@meta.data[seu$filter_reason %in% c("qc_fail", "cluster_remove", "malat1", "manual_exclude", "celltype_m2") | is.na(seu$filter_reason), ]
+  qc_meta <- seu@meta.data[seu$filter_reason %in% c("cluster_remove", "malat1", "manual_exclude", "celltype_m2") | is.na(seu$filter_reason), ]
   seu <- seu[, seu$filter_keep]
 
   filtered_seu_path <- glue("output/seurat/{sample_id}_filtered{extension}_seu.rds")
 
   # Cache check: if existing filtered_seu has the same post-filter cells, skip
   # expensive recomputation and only refresh metadata.
-  meta_cols_to_refresh <- c("clone_opt", "GT_opt", "scna", "filter_reason", "filter_keep", "abbreviation")
+  meta_cols_to_refresh <- c("clone_opt", "GT_opt", "scna", "filter_reason", "filter_keep", "abbreviation",
+                            "p_cnv", celltype_meta_cols())
   if (file.exists(filtered_seu_path)) {
     cached_seu <- tryCatch(readRDS(filtered_seu_path), error = function(e) NULL)
     if (!is.null(cached_seu) && identical(sort(colnames(cached_seu)), sort(colnames(seu)))) {
@@ -254,7 +265,7 @@ prep_unfiltered_seu <- function(numbat_rds_file, cluster_dictionary, large_clone
     message("clone_post missing required columns (clone_opt, GT_opt) for ", sample_id, "; returning NA")
     return(NA_character_)
   }
-  nb_clone_post <- mynb[["clone_post"]][, c("cell", "clone_opt", "GT_opt")] %>%
+  nb_clone_post <- mynb[["clone_post"]][, intersect(c("cell", "clone_opt", "GT_opt", "p_cnv"), colnames(mynb[["clone_post"]]))] %>%
     dplyr::mutate(cell = str_replace(cell, "\\.", "-")) %>%
     tibble::column_to_rownames("cell")
   seu <- Seurat::AddMetaData(seu, nb_clone_post)
@@ -305,6 +316,17 @@ prep_unfiltered_seu <- function(numbat_rds_file, cluster_dictionary, large_clone
   scna_metadata <- scna_metadata[colnames(seu), , drop = FALSE]
   seu <- Seurat::AddMetaData(seu, scna_metadata)
 
+  # Per-cell cell type (M2: plae 30 types) + calibrated marker support, every cell (#54).
+  # Calibration: confident tumor cells passing QC (fall back to all QC-passing tumor cells).
+  md <- seu@meta.data
+  qc_ok <- md$nCount_gene > 1000 & md$nFeature_gene > 1000 & md$percent.mt < 10
+  is_tumor <- !is.na(md$GT_opt) & md$GT_opt != ""
+  calib <- qc_ok & is_tumor & if ("p_cnv" %in% colnames(md)) (!is.na(md$p_cnv) & md$p_cnv > 0.9) else TRUE
+  if (sum(calib, na.rm = TRUE) < 50) calib <- qc_ok & is_tumor
+  seu <- annotate_celltype_m2(seu, calib = calib %in% TRUE)
+  message("celltype exclusion for ", sample_id, ": ", sum(seu$celltype_exclude), " of ", ncol(seu),
+          " cells (", sum(calib %in% TRUE), " calibration cells)")
+
   seu <- annotate_filter_reason(
     seu = seu,
     sample_id = sample_id,
@@ -316,7 +338,8 @@ prep_unfiltered_seu <- function(numbat_rds_file, cluster_dictionary, large_clone
 
   # Cache check: if existing unfiltered_seu has the same cells, skip expensive
   # recomputation (SCTransform/PCA/UMAP/clustering/markers) and only refresh metadata.
-  meta_cols_to_refresh <- c("clone_opt", "GT_opt", "scna", "filter_reason", "filter_keep", "abbreviation")
+  meta_cols_to_refresh <- c("clone_opt", "GT_opt", "scna", "filter_reason", "filter_keep", "abbreviation",
+                            "p_cnv", celltype_meta_cols())
   if (file.exists(unfiltered_seu_path)) {
     cached_seu <- tryCatch(readRDS(unfiltered_seu_path), error = function(e) NULL)
     if (!is.null(cached_seu) && identical(sort(colnames(cached_seu)), sort(colnames(seu)))) {
@@ -466,14 +489,21 @@ extract_filter_metadata <- function(
   meta <- meta |>
     dplyr::mutate(in_manual_exclude = cell %in% manual_cells)
 
+  # Per-cell M2 cell-type exclusion (#54); FALSE for objects built before it.
+  meta <- meta |>
+    dplyr::mutate(celltype_m2_flag = if ("celltype_exclude" %in% names(meta)) {
+      !is.na(celltype_exclude) & celltype_exclude
+    } else FALSE)
+
   meta |>
     dplyr::select(
       cell, sample_id,
       nCount_gene, nFeature_gene, percent.mt,
       clone_opt_is_na, cluster, abbreviation,
-      cluster_remove_flag, is_malat1, in_manual_exclude,
+      cluster_remove_flag, is_malat1, in_manual_exclude, celltype_m2_flag,
       scna,
-      dplyr::any_of("filter_keep")
+      dplyr::any_of(c("filter_keep", "filter_reason", "GT_opt", "p_cnv",
+                      "celltype_m2", "celltype_m2_group", "celltype_exclude"))
     )
 }
 
@@ -489,6 +519,7 @@ extract_filter_metadata <- function(
 #' @param include_cluster_removal Logical; apply cluster_remove_flag step (default TRUE).
 #' @param include_malat1_removal Logical; remove MALAT1 cluster cells (default TRUE).
 #' @param include_manual_removal Logical; apply manual exclusion list (default TRUE).
+#' @param include_celltype_removal Logical; drop cells whose per-cell M2 call is rod, bipolar, RBC or microglia (default TRUE, #54).
 #' @return A tibble with columns: stage, scna, n_cells, pct_remaining.
 #'   pct_remaining is the percentage of the pre-filter total at that stage.
 #' @export
@@ -499,9 +530,11 @@ apply_filter_criteria <- function(
   nFeature_threshold      = 1000,
   include_cluster_removal = TRUE,
   include_malat1_removal  = TRUE,
-  include_manual_removal  = TRUE
+  include_manual_removal  = TRUE,
+  include_celltype_removal = TRUE
 ) {
   n_total <- nrow(filter_meta)
+  if (!"celltype_m2_flag" %in% names(filter_meta)) filter_meta$celltype_m2_flag <- FALSE
   stage_cells <- list()
 
   stage_cells[["clone_na"]] <- filter_meta |>
@@ -524,13 +557,21 @@ apply_filter_criteria <- function(
       dplyr::filter(!is_malat1)
   }
 
-  stage_cells[["manual"]] <- stage_cells[["cluster_removal"]]
+  # Per-cell M2 cell-type exclusion (#54), applied after cluster removal as in
+  # annotate_filter_reason().
+  stage_cells[["celltype"]] <- stage_cells[["cluster_removal"]]
+  if (include_celltype_removal) {
+    stage_cells[["celltype"]] <- stage_cells[["celltype"]] |>
+      dplyr::filter(!celltype_m2_flag)
+  }
+
+  stage_cells[["manual"]] <- stage_cells[["celltype"]]
   if (include_manual_removal) {
     stage_cells[["manual"]] <- stage_cells[["manual"]] |>
       dplyr::filter(!in_manual_exclude)
   }
 
-  stage_names <- c("clone_na", "qc", "cluster_removal", "manual")
+  stage_names <- c("clone_na", "qc", "cluster_removal", "celltype", "manual")
 
   purrr::map_dfr(stage_names, function(stage) {
     stage_cells[[stage]] |>
@@ -689,18 +730,16 @@ assemble_diploid_seu <- function(filtered_seus_paths,
           seu[[assay_name]] <- SeuratObject::JoinLayers(seu[[assay_name]])
       }
       seu$sample_source <- sample_id
-      seu <- plot_celltype_predictions(seu, sample_id = sample_id, group.by = "gene_snn_res.0.2")$seu
-      # Accept both spellings. plot_celltype_predictions() builds its reference
-      # with filter(type %in% str_remove(celltypes, "s$")), so the values it
-      # assigns to seu$type are the SINGULAR plae labels -- "Cone", not
-      # "Cones". Testing only the plural made this mask always FALSE, every
-      # sample return NULL, and the function error out on the empty list; that
-      # is why ks_diploid_seu never produced anything. (github #44)
-      # Photoreceptor precursors are included by default (issue #54, 2026-11-12): the
-      # cone-vs-precursor split of this cluster-level call is not reliable, and
-      # excluding them drops most diploid cone-lineage cells. include_pr_precursor =
-      # FALSE restores the cone-only selection.
-      cone_mask <- tolower(seu$type) %in% composite_celltypes(include_pr_precursor)
+      # Per-cell M2 call (plae 30 types), stored on the filtered objects by
+      # prep_unfiltered_seu() (#54, 2026-11-13). It replaces the cluster-level
+      # plot_celltype_predictions() call, which labelled diploid cells like the tumor
+      # cells sharing their cluster. Photoreceptor precursors are included by default;
+      # include_pr_precursor = FALSE restores the cone-only selection.
+      if (!"celltype_m2_group" %in% colnames(seu@meta.data)) {
+        stop("no celltype_m2_group in ", sample_id, "; rebuild unfiltered_seus/filtered_seus")
+      }
+      keep_groups <- c("cone", if (include_pr_precursor) "pr_precursor")
+      cone_mask <- !is.na(seu$celltype_m2_group) & seu$celltype_m2_group %in% keep_groups
       if (!any(cone_mask)) return(NULL)
       seu[, cone_mask]
     })
@@ -793,13 +832,25 @@ add_phase_to_filtered_seu <- function(seu_path, organism = "human") {
   if (is.na(seu_path)) return(NA_character_)
   
   seu <- readRDS(seu_path)
-  
-  # Add cell cycle phase calculation
-  seu <- annotate_cell_cycle_without_1q(seu, organism = organism)
-  
-  # Save back to disk
-  saveRDS(seu, seu_path)
-  
+
+  # AddModuleScore bins genes by mean expression (nbin = 24). When many genes tie at
+  # the same mean, cut_number cannot make 24 bins ("Insufficient data values to
+  # produce 24 bins": SRX10264524, SRX10831282, SRX10831286, SRX11133589,
+  # SRX14116948, SRX22868105); fall back to fewer bins.
+  scored <- NULL
+  for (nbin in c(24, 12, 6)) {
+    scored <- tryCatch(annotate_cell_cycle_without_1q(seu, organism = organism, nbin = nbin),
+                       error = function(e) NULL)
+    if (!is.null(scored)) break
+  }
+  # Never fail the filtered object over Phase: callers read this path (#54).
+  if (is.null(scored)) {
+    warning("cell-cycle scoring failed at nbin 24, 12 and 6; ", seu_path, " saved without Phase")
+    return(seu_path)
+  }
+  if (nbin != 24) message("cell-cycle scoring used nbin = ", nbin, " for ", seu_path)
+
+  saveRDS(scored, seu_path)
   seu_path
 }
 

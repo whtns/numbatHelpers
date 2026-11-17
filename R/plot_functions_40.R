@@ -578,7 +578,7 @@ plot_effect_of_filtering <- function(unfiltered_seu_path, filtered_seu_path = NU
 
   # filter_reason umap ------------------------------
   if ("filter_reason" %in% colnames(unfiltered_seu@meta.data)) {
-    reason_levels <- c("clone_opt_na", "qc_fail", "cluster_remove", "malat1", "manual_exclude")
+    reason_levels <- c("clone_opt_na", "qc_fail", "cluster_remove", "malat1", "manual_exclude", "celltype_m2")
     unfiltered_seu@meta.data$filter_reason <- factor(unfiltered_seu@meta.data$filter_reason, levels = reason_levels)
     reason_cols <- c(scales::hue_pal()(length(reason_levels)), "grey80") |>
       set_names(c(reason_levels, "kept"))
@@ -648,6 +648,77 @@ plot_effect_of_filtering <- function(unfiltered_seu_path, filtered_seu_path = NU
       FALSE
     })
     if (fr_ok) plot_list["filter_reason_umap"] <- tmp_path
+  }
+
+  # cell-type (M2 + marker support) umaps, #54 ------------------------------
+  if ("celltype_m2_group" %in% colnames(unfiltered_seu@meta.data)) {
+    md <- unfiltered_seu@meta.data
+    unfiltered_seu@meta.data$role_label <- factor(
+      dplyr::case_when(is.na(md$GT_opt) ~ "no_numbat", md$GT_opt == "" ~ "diploid", TRUE ~ "tumor"),
+      levels = c("tumor", "diploid", "no_numbat"))
+    excl <- if ("celltype_exclude" %in% colnames(md)) md$celltype_exclude %in% TRUE else rep(FALSE, nrow(md))
+    in_group <- md$celltype_m2_group %in% celltype_m2_excluded_groups()
+    unfiltered_seu@meta.data$celltype_outcome <- factor(
+      dplyr::case_when(excl ~ "excluded (call + markers)",
+                       in_group ~ "excluded type, no marker support",
+                       TRUE ~ "photoreceptor lineage / other"),
+      levels = c("excluded (call + markers)", "excluded type, no marker support",
+                 "photoreceptor lineage / other"))
+    outcome_cols <- c("excluded (call + markers)" = "#d62728",
+                      "excluded type, no marker support" = "#ff9f1c",
+                      "photoreceptor lineage / other" = "grey85")
+    n_excl <- table(unfiltered_seu@meta.data$role_label[excl])
+
+    # fine M2 type (30 plae types); rare types folded so the legend stays readable
+    fine <- as.character(md$celltype_m2)
+    fine[is.na(fine)] <- "no call"
+    frac <- table(fine) / length(fine)
+    fine_lab <- ifelse(fine %in% names(frac)[frac >= 0.002], fine, "other (<0.2%)")
+    grp <- celltype_group(fine)
+    lvl_order <- unique(fine_lab[order(factor(grp, levels = c(
+      "cone", "pr_precursor", "rpc", "neurogenic", "other_retinal", "rod", "bipolar", "rbc",
+      "microglia", "other_immune", "other_nonretinal", "rpe")), fine_lab)])
+    lvl_order <- c(setdiff(lvl_order, c("other (<0.2%)", "no call")),
+                   intersect(c("other (<0.2%)", "no call"), lvl_order))
+    unfiltered_seu@meta.data$celltype_m2_fine <- factor(fine_lab, levels = lvl_order)
+    fine_cols <- setNames(scales::hue_pal()(length(lvl_order)), lvl_order)
+    fine_cols[intersect(c("other (<0.2%)", "no call"), lvl_order)] <- "grey80"
+
+    # non-photoreceptor types, each named (ganglion, amacrine, horizontal, Muller, astrocyte, ...)
+    np_groups <- c("other_retinal", "bipolar", "rbc", "microglia", "other_immune",
+                   "other_nonretinal", "rpe", "rod")
+    np <- ifelse(grp %in% np_groups, fine, "photoreceptor lineage / RPC / neurogenic")
+    np_n <- table(np)
+    np_lab <- ifelse(np == "photoreceptor lineage / RPC / neurogenic", np,
+                     paste0(np, " (", np_n[np], ")"))
+    np_lvls <- c(sort(setdiff(unique(np_lab), "photoreceptor lineage / RPC / neurogenic")),
+                 "photoreceptor lineage / RPC / neurogenic")
+    unfiltered_seu@meta.data$celltype_m2_nonpr <- factor(np_lab, levels = np_lvls)
+    np_cols <- setNames(c(scales::hue_pal()(length(np_lvls) - 1), "grey90"), np_lvls)
+
+    tmp_path <- tempfile(fileext = ".pdf")
+    ct_ok <- tryCatch({
+      p_ct <- patchwork::wrap_plots(
+        DimPlot(unfiltered_seu, group.by = "celltype_m2_fine", cols = fine_cols) +
+          labs(title = "M2 call (plae, 30 types)"),
+        DimPlot(unfiltered_seu, group.by = "celltype_m2_nonpr", cols = np_cols,
+                order = rev(setdiff(np_lvls, "photoreceptor lineage / RPC / neurogenic"))) +
+          labs(title = "non-photoreceptor M2 calls (cells)"),
+        DimPlot(unfiltered_seu, group.by = "role_label",
+                cols = c(tumor = "#1f77b4", diploid = "#2ca02c", no_numbat = "grey70")) +
+          labs(title = "numbat genotype"),
+        DimPlot(unfiltered_seu, group.by = "celltype_outcome", cols = outcome_cols,
+                order = c("excluded (call + markers)", "excluded type, no marker support")) +
+          labs(title = "cell-type exclusion",
+               subtitle = paste0("excluded: ", paste(names(n_excl), n_excl, sep = " ", collapse = ", "))),
+        ncol = 2) + patchwork::plot_annotation(title = sample_id)
+      ggsave(tmp_path, p_ct, height = 10, width = 15)
+      TRUE
+    }, error = function(e) {
+      warning("celltype_umaps failed: ", conditionMessage(e))
+      FALSE
+    })
+    if (ct_ok) plot_list["celltype_umaps"] <- tmp_path
   }
 
   # dimplot grids ------------------------------
