@@ -74,12 +74,15 @@ plot_filtering_impact <- function(filter_meta,
 
   # cell-type pages
   ct_tot <- d |> dplyr::group_by(sample_id, role) |> dplyr::summarise(n_role = dplyr::n(), .groups = "drop")
+  # fine M2 type (plae) per cell; falls back to the group when the fine call is absent
+  if (!"celltype_m2" %in% names(d)) d$celltype_m2 <- NA_character_
   ct <- d |>
     dplyr::filter(excl_group) |>
     dplyr::mutate(status = ifelse(fate == "celltype_m2", "removed (call + support)",
                            ifelse(celltype_exclude, "excluded call + support, removed earlier",
-                                  "no support (kept by this rule)"))) |>
-    dplyr::count(sample_id, role, celltype_m2_group, status, name = "n") |>
+                                  "no support (kept by this rule)")),
+                  ct_type = dplyr::coalesce(as.character(celltype_m2), celltype_m2_group)) |>
+    dplyr::count(sample_id, role, celltype_m2_group, ct_type, status, name = "n") |>
     dplyr::left_join(ct_tot, by = c("sample_id", "role")) |>
     dplyr::mutate(pct = 100 * n / n_role,
                   sample_id = factor(sample_id, levels = rev(ord)))
@@ -91,23 +94,37 @@ plot_filtering_impact <- function(filter_meta,
 
   group_cols <- c(rod = "#1f77b4", bipolar = "#17becf", rbc = "#d62728", microglia = "#2ca02c",
                   other_immune = "#98df8a", other_nonretinal = "#9467bd", rpe = "#8c564b")
+  # every fine M2 type in the excluded groups, ordered by group, coloured like the bar pages
+  ct_types <- dplyr::distinct(ct, celltype_m2_group, ct_type) |>
+    dplyr::mutate(g = factor(celltype_m2_group, levels = celltype_m2_excluded_groups())) |>
+    dplyr::arrange(g, ct_type)
+  ct_pal <- celltype_m2_palette()
+  ct_cols <- stats::setNames(
+    ifelse(ct_types$ct_type %in% names(ct_pal), ct_pal[ct_types$ct_type],
+           group_cols[ct_types$celltype_m2_group]), ct_types$ct_type)
+  ct_cols[is.na(ct_cols)] <- "grey50"
+  ct$ct_type <- factor(ct$ct_type, levels = rev(ct_types$ct_type))
   mk_ct <- function(dd, title, subtitle) {
     if (!nrow(dd)) return(ggplot2::ggplot() + ggplot2::labs(title = title, subtitle = "none") + base_theme)
-    ggplot2::ggplot(dd, ggplot2::aes(x = n, y = sample_id, fill = celltype_m2_group)) +
+    ggplot2::ggplot(dd, ggplot2::aes(x = n, y = sample_id, fill = ct_type)) +
       ggplot2::geom_col(width = 0.8) +
       ggplot2::facet_wrap(~role, nrow = 1, scales = "free_x", drop = FALSE) +
-      ggplot2::scale_fill_manual(values = group_cols) +
+      ggplot2::scale_fill_manual(values = ct_cols, breaks = ct_types$ct_type, drop = FALSE) +
+      ggplot2::guides(fill = ggplot2::guide_legend(ncol = 1)) +
       ggplot2::geom_text(data = dd |> dplyr::group_by(sample_id, role) |>
                            dplyr::summarise(n = sum(n), pct = sum(pct), .groups = "drop"),
                          ggplot2::aes(x = n, y = sample_id, label = sprintf("%.1f%%", pct)),
                          inherit.aes = FALSE, hjust = -0.1, size = 2.3) +
       ggplot2::scale_x_continuous(expand = ggplot2::expansion(mult = c(0, 0.25))) +
-      ggplot2::labs(x = "cells", y = NULL, fill = "M2 group", title = title, subtitle = subtitle) +
-      base_theme
+      ggplot2::labs(x = "cells", y = NULL, fill = "M2 type (plae)", title = title, subtitle = subtitle) +
+      base_theme +
+      ggplot2::theme(legend.position = "right", legend.text = ggplot2::element_text(size = 6),
+                     legend.key.size = grid::unit(8, "pt"))
   }
   p_rm <- mk_ct(dplyr::filter(ct, status == "removed (call + support)"),
                 "Cells removed by the cell-type rule (M2 call + marker panel or >=60% of its cluster)",
-                paste0(tot_txt, ". Label: % of that sample's cells in the genotype."))
+                paste0(tot_txt, ". Label: % of that sample's cells in the genotype.\n",
+                       "Coloured by M2 type; only types in the excluded groups (* on the bar pages) can be removed by this rule."))
   p_spared <- mk_ct(dplyr::filter(ct, status == "no support (kept by this rule)"),
                     "M2 calls an excluded type but no marker or cluster-majority support: not removed by the cell-type rule",
                     "These cells may still be removed by another filter. Label: % of that sample's cells in the genotype.")
