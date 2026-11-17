@@ -158,6 +158,8 @@ plot_effect_of_filtering_old <- function(unfiltered_seu_path, filtered_seu_path,
 #' @param filtered_seu_path File path
 #' @param group.by Character string (default: "gene_snn_res.0.2")
 #' @param cluster_dictionary Cluster information
+#' @param nb_paths numbat RDS paths (numbat_rds_files); used for the clone tree on the marker-heatmap pages
+#' @param clone_simplifications large_clone_simplifications list for the marker-heatmap pages
 #' @param plot_path File path
 #' @return ggplot2 plot object
 #' @export
@@ -167,6 +169,8 @@ plot_effect_of_filtering <- function(unfiltered_seu_path, filtered_seu_path = NU
                                      nFeature_threshold = c(500, 1000),
                                      low_hypoxia_seu_path = NULL,
                                      high_hypoxia_seu_path = NULL,
+                                     nb_paths = NULL,
+                                     clone_simplifications = NULL,
                                      plot_path = NULL) {
 
   # Helper function: split label lines at commas with word wrap
@@ -578,7 +582,7 @@ plot_effect_of_filtering <- function(unfiltered_seu_path, filtered_seu_path = NU
 
   # filter_reason umap ------------------------------
   if ("filter_reason" %in% colnames(unfiltered_seu@meta.data)) {
-    reason_levels <- c("clone_opt_na", "qc_fail", "cluster_remove", "malat1", "manual_exclude", "celltype_m2")
+    reason_levels <- c("clone_opt_na", "qc_fail", "manual_exclude", "celltype_m2")
     unfiltered_seu@meta.data$filter_reason <- factor(unfiltered_seu@meta.data$filter_reason, levels = reason_levels)
     reason_cols <- c(scales::hue_pal()(length(reason_levels)), "grey80") |>
       set_names(c(reason_levels, "kept"))
@@ -659,13 +663,13 @@ plot_effect_of_filtering <- function(unfiltered_seu_path, filtered_seu_path = NU
     excl <- if ("celltype_exclude" %in% colnames(md)) md$celltype_exclude %in% TRUE else rep(FALSE, nrow(md))
     in_group <- md$celltype_m2_group %in% celltype_m2_excluded_groups()
     unfiltered_seu@meta.data$celltype_outcome <- factor(
-      dplyr::case_when(excl ~ "excluded (call + markers)",
-                       in_group ~ "excluded type, no marker support",
+      dplyr::case_when(excl ~ "excluded (call + support)",
+                       in_group ~ "excluded type, no support",
                        TRUE ~ "photoreceptor lineage / other"),
-      levels = c("excluded (call + markers)", "excluded type, no marker support",
+      levels = c("excluded (call + support)", "excluded type, no support",
                  "photoreceptor lineage / other"))
-    outcome_cols <- c("excluded (call + markers)" = "#d62728",
-                      "excluded type, no marker support" = "#ff9f1c",
+    outcome_cols <- c("excluded (call + support)" = "#d62728",
+                      "excluded type, no support" = "#ff9f1c",
                       "photoreceptor lineage / other" = "grey85")
     n_excl <- table(unfiltered_seu@meta.data$role_label[excl])
 
@@ -716,7 +720,7 @@ plot_effect_of_filtering <- function(unfiltered_seu_path, filtered_seu_path = NU
                 cols = c(tumor = "#1f77b4", diploid = "#2ca02c", no_numbat = "grey70")) +
           labs(title = "numbat genotype") + leg,
         DimPlot(unfiltered_seu, group.by = "celltype_outcome", cols = outcome_cols, pt.size = 0.5,
-                order = c("excluded (call + markers)", "excluded type, no marker support")) +
+                order = c("excluded (call + support)", "excluded type, no support")) +
           labs(title = "cell-type exclusion",
                subtitle = paste0("excluded: ", paste(names(n_excl), n_excl, sep = " ", collapse = ", "))) + leg,
         ncol = 2) + patchwork::plot_annotation(title = sample_id)
@@ -896,7 +900,7 @@ plot_effect_of_filtering <- function(unfiltered_seu_path, filtered_seu_path = NU
     file_slug <- str_remove(fs::path_file(seu_path), "_filtered_seu.*")
     out_path <- glue::glue("results/{file_slug}_{label}heatmap_phase_scatter_patchwork.pdf")
     tryCatch({
-      plot_seu_marker_heatmap(seu_path, nb_paths = numbat_rds_files, clone_simplifications = large_clone_simplifications, group.by = "gene_snn_res.0.2", label = label, tmp_plot_path = FALSE)
+      plot_seu_marker_heatmap(seu_path, nb_paths = nb_paths, clone_simplifications = clone_simplifications, group.by = "gene_snn_res.0.2", label = label, tmp_plot_path = FALSE)
       if (file.exists(out_path)) out_path else NULL
     }, error = function(e) {
       warning("marker heatmap generation failed for ", seu_path, ": ", conditionMessage(e))

@@ -4,7 +4,8 @@
 #   1. its per-cell call against the plae fetal-retina pseudobulk (30 types; "M2") is a
 #      non-photoreceptor-lineage type, and
 #   2. the matching marker panel is positive, calibrated per sample against depth-matched
-#      confident tumor cells ("M5").
+#      confident tumor cells ("M5"), OR that group makes up >= 60% of the cell's
+#      gene_snn_res.0.2 cluster (2026-11-17; replaces whole-cluster removal).
 # M2 alone is not enough: on tumor cells its RBC / microglia calls are near-ties carried by
 # housekeeping and ribosomal genes, with no marker expression (docs/tumor_celltype_label_audit.md).
 # Ported from src/audit_composite_diploid.R (label_group, cor_call, log_pb, per_cell_call, M5)
@@ -130,7 +131,8 @@ celltype_marker_support <- function(seu, calib, q = 0.99, n_bins = 5L, assay = "
 #' Correlates each cell's log1p(CP10k) expression with the log1p(CP10k) plae pseudobulk (all 30
 #' types) over the object's variable features and takes the best-correlated type. With `calib`,
 #' also computes calibrated marker support and `celltype_exclude` = the call's group is in
-#' [celltype_m2_excluded_groups()] AND one of its panels ([celltype_group_panels()]) is positive.
+#' [celltype_m2_excluded_groups()] AND (one of its panels ([celltype_group_panels()]) is positive
+#' OR the group makes up at least `majority` of the cell's `cluster`).
 #'
 #' @param seu Seurat object.
 #' @param calib Optional logical vector over cells (confident tumor cells) for marker calibration.
@@ -139,14 +141,27 @@ celltype_marker_support <- function(seu, calib, q = 0.99, n_bins = 5L, assay = "
 #' @param assay Assay whose counts are used (default "gene").
 #' @param genes Optional gene set; default the object's variable features.
 #' @param chunk Cells per correlation chunk.
+#' @param cluster Metadata column with clusters for the majority support (NULL: markers only).
+#' @param majority Minimum share of the cluster in the call's group for majority support.
 #' @return `seu` with metadata `celltype_m2`, `celltype_m2_r`, `celltype_m2_margin`,
 #'   `celltype_m2_group`, `celltype_pos_<panel>` and `celltype_exclude`.
 #' @export
 annotate_celltype_m2 <- function(seu, calib = NULL,
                                  ref_path = "/project2/cobrinik_1090/Homo_sapiens/numbat/plae_ref.rds",
-                                 assay = "gene", genes = NULL, chunk = 2000L) {
+                                 assay = "gene", genes = NULL, chunk = 2000L,
+                                 cluster = "gene_snn_res.0.2", majority = 0.6) {
   ln <- .lognorm_counts(seu, assay)
   calls <- celltype_m2_calls(seu, ref_path = ref_path, assay = assay, genes = genes, chunk = chunk, lognorm = ln)
+  # Share of the cell's cluster that carries the cell's M2 group (NA without a cluster column).
+  calls$celltype_m2_cluster_share <- NA_real_
+  if (!is.null(cluster) && cluster %in% colnames(seu@meta.data)) {
+    cl <- as.character(seu@meta.data[rownames(calls), cluster])
+    key <- paste(cl, calls$celltype_m2_group)
+    n_key <- table(key)[key]
+    n_cl <- table(cl)[cl]
+    calls$celltype_m2_cluster_share <- ifelse(is.na(cl) | is.na(calls$celltype_m2_group), NA_real_,
+                                              as.numeric(n_key) / as.numeric(n_cl))
+  }
   calls$celltype_exclude <- FALSE
   if (!is.null(calib)) {
     stopifnot(length(calib) == ncol(seu))
@@ -160,7 +175,13 @@ annotate_celltype_m2 <- function(seu, calib = NULL,
       cols <- paste0("celltype_pos_", gp[[g]])
       supported[rows] <- Reduce(`|`, lapply(cols, function(cc) pos[[cc]][rows]))
     }
-    calls$celltype_exclude <- supported
+    # Support = a positive marker panel OR the group dominates the cell's cluster (#54,
+    # 2026-11-17): catches marker-negative rods in rod clusters, while a tumor cell with a lone
+    # near-tie rod/bipolar call inside a cone cluster is kept.
+    in_excl <- calls$celltype_m2_group %in% celltype_m2_excluded_groups()
+    majority_ok <- in_excl & !is.na(calls$celltype_m2_cluster_share) &
+      calls$celltype_m2_cluster_share >= majority
+    calls$celltype_exclude <- supported | majority_ok
     calls <- cbind(calls, pos)
   }
   Seurat::AddMetaData(seu, calls)
@@ -215,6 +236,7 @@ celltype_m2_calls <- function(seu,
 #' @export
 celltype_meta_cols <- function() {
   c("celltype_m2", "celltype_m2_r", "celltype_m2_margin", "celltype_m2_group", "celltype_exclude",
+    "celltype_m2_cluster_share",
     paste0("celltype_pos_", names(celltype_marker_panels())))
 }
 

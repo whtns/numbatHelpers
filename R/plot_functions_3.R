@@ -30,11 +30,6 @@ annotate_filter_reason <- function(
     stop("cluster_dictionary has no entry for ", sample_id, "; cannot annotate filter reasons")
   }
 
-  clusters_to_remove <-
-    cluster_dictionary[[sample_id]] %>%
-    dplyr::filter(remove == "1") %>%
-    dplyr::pull(`gene_snn_res.0.2`)
-
   cells_to_drop <- character(0)
   if (!is.null(cells_to_remove) && !is.null(cells_to_remove[[sample_id]])) {
     cells_to_drop <- cells_to_remove[[sample_id]][["cell"]]
@@ -45,8 +40,6 @@ annotate_filter_reason <- function(
 
   meta <- seu@meta.data
   has_clone_col <- "clone_opt" %in% colnames(meta)
-  has_cluster_col <- "gene_snn_res.0.2" %in% colnames(meta)
-  has_abbrev_col <- "abbreviation" %in% colnames(meta)
 
   clone_missing <- if (has_clone_col) {
     is.na(meta$clone_opt)
@@ -59,17 +52,10 @@ annotate_filter_reason <- function(
     meta$nFeature_gene <= nFeature_threshold |
     meta$nCount_gene <= nCount_threshold
 
-  cluster_remove <- if (has_cluster_col) {
-    meta$gene_snn_res.0.2 %in% clusters_to_remove
-  } else {
-    rep(FALSE, nrow(meta))
-  }
-
-  malat1_remove <- if (has_abbrev_col) {
-    !is.na(meta$abbreviation) & meta$abbreviation == "MALAT1"
-  } else {
-    rep(FALSE, nrow(meta))
-  }
+  # Whole-cluster removal (rod/APOE/low_qual/MALAT1 cluster labels) and the MALAT1-cluster step
+  # were dropped on 2026-11-17 (#54): they removed ~24k tumor cells that pass per-cell QC. Rods
+  # and non-photoreceptor cells are now removed per cell by the cell-type rule below, which
+  # takes cluster-majority support (annotate_celltype_m2()). `abbreviation` stays as a label.
 
   manual_remove <- if (length(cells_to_drop) > 0) {
     rownames(meta) %in% cells_to_drop
@@ -87,10 +73,8 @@ annotate_filter_reason <- function(
   }
 
   filter_reason <- dplyr::case_when(
-    cluster_remove ~ "cluster_remove",
     clone_missing ~ "clone_opt_na",
     qc_fail ~ "qc_fail",
-    malat1_remove ~ "malat1",
     manual_remove ~ "manual_exclude",
     celltype_remove ~ "celltype_m2",
     TRUE ~ NA_character_
@@ -185,8 +169,8 @@ filter_cluster_save_seu <- function(numbat_rds_file, seus, cluster_dictionary, l
          ". Expected columns: filter_reason, filter_keep.")
   }
 
-  scna_meta <- seu@meta.data[seu$filter_reason %in% c("qc_fail", "cluster_remove", "malat1", "manual_exclude", "celltype_m2") | is.na(seu$filter_reason), ]
-  qc_meta <- seu@meta.data[seu$filter_reason %in% c("cluster_remove", "malat1", "manual_exclude", "celltype_m2") | is.na(seu$filter_reason), ]
+  scna_meta <- seu@meta.data[seu$filter_reason %in% c("qc_fail", "manual_exclude", "celltype_m2") | is.na(seu$filter_reason), ]
+  qc_meta <- seu@meta.data[seu$filter_reason %in% c("manual_exclude", "celltype_m2") | is.na(seu$filter_reason), ]
   seu <- seu[, seu$filter_keep]
 
   filtered_seu_path <- glue("output/seurat/{sample_id}_filtered{extension}_seu.rds")
@@ -528,8 +512,8 @@ apply_filter_criteria <- function(
   mito_threshold          = 10,
   nCount_threshold        = 1000,
   nFeature_threshold      = 1000,
-  include_cluster_removal = TRUE,
-  include_malat1_removal  = TRUE,
+  include_cluster_removal = FALSE,  # no longer part of the filter (#54, 2026-11-17)
+  include_malat1_removal  = FALSE,
   include_manual_removal  = TRUE,
   include_celltype_removal = TRUE
 ) {

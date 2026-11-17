@@ -23,8 +23,7 @@ generate_filtering_cell_counts <- function(filtered_seus, seus_low_hypoxia, filt
           sum(
             !clone_opt_is_na &
               percent.mt < 10 & nCount_gene > 1000 &
-              nFeature_gene > 1000 &
-              !cluster_remove_flag & !is_malat1 & !in_manual_exclude
+              nFeature_gene > 1000 & !in_manual_exclude
           )
         },
         .groups = "drop"

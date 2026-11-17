@@ -3,7 +3,7 @@
 #' Reads the per-cell tibbles from `extract_filter_metadata()` (the
 #' `filter_inspection_metadata` target) and plots, per sample, how many cells each filter
 #' removes from tumor, diploid and un-genotyped cells, with a page on the per-cell cell-type
-#' exclusion (M2 call + calibrated marker support).
+#' exclusion (M2 call + marker-panel or cluster-majority support).
 #'
 #' @param filter_meta List (or data.frame) of per-sample tibbles from `extract_filter_metadata()`.
 #' @param out_pdf Output PDF.
@@ -23,8 +23,7 @@ plot_filtering_impact <- function(filter_meta,
   if (!"celltype_m2_group" %in% names(filter_meta)) filter_meta$celltype_m2_group <- NA_character_
   if (!"celltype_exclude" %in% names(filter_meta)) filter_meta$celltype_exclude <- FALSE
 
-  fate_levels <- c("kept", "clone_opt_na", "qc_fail", "cluster_remove", "malat1",
-                   "celltype_m2", "manual_exclude")
+  fate_levels <- c("kept", "clone_opt_na", "qc_fail", "manual_exclude", "celltype_m2")
   role_levels <- c("tumor", "diploid", "no_numbat")
   d <- filter_meta |>
     dplyr::mutate(
@@ -43,7 +42,7 @@ plot_filtering_impact <- function(filter_meta,
   readr::write_csv(counts, out_csv)
 
   fate_cols <- c(kept = "grey80", clone_opt_na = "#8c564b", qc_fail = "#ff7f0e",
-                 cluster_remove = "#9467bd", malat1 = "#e377c2", celltype_m2 = "#d62728",
+                 celltype_m2 = "#d62728",
                  manual_exclude = "#17becf")
   # order samples by tumor-cell count
   ord <- d |> dplyr::filter(role == "tumor") |> dplyr::count(sample_id) |>
@@ -77,9 +76,9 @@ plot_filtering_impact <- function(filter_meta,
   ct_tot <- d |> dplyr::group_by(sample_id, role) |> dplyr::summarise(n_role = dplyr::n(), .groups = "drop")
   ct <- d |>
     dplyr::filter(excl_group) |>
-    dplyr::mutate(status = ifelse(fate == "celltype_m2", "removed (call + markers)",
-                           ifelse(celltype_exclude, "excluded call + markers, removed earlier",
-                                  "no marker support (kept by this rule)"))) |>
+    dplyr::mutate(status = ifelse(fate == "celltype_m2", "removed (call + support)",
+                           ifelse(celltype_exclude, "excluded call + support, removed earlier",
+                                  "no support (kept by this rule)"))) |>
     dplyr::count(sample_id, role, celltype_m2_group, status, name = "n") |>
     dplyr::left_join(ct_tot, by = c("sample_id", "role")) |>
     dplyr::mutate(pct = 100 * n / n_role,
@@ -106,15 +105,15 @@ plot_filtering_impact <- function(filter_meta,
       ggplot2::labs(x = "cells", y = NULL, fill = "M2 group", title = title, subtitle = subtitle) +
       base_theme
   }
-  p_rm <- mk_ct(dplyr::filter(ct, status == "removed (call + markers)"),
-                "Cells removed by the cell-type rule (M2 call + calibrated marker support)",
+  p_rm <- mk_ct(dplyr::filter(ct, status == "removed (call + support)"),
+                "Cells removed by the cell-type rule (M2 call + marker panel or >=60% of its cluster)",
                 paste0(tot_txt, ". Label: % of that sample's cells in the genotype."))
-  p_spared <- mk_ct(dplyr::filter(ct, status == "no marker support (kept by this rule)"),
-                    "M2 calls an excluded type but no marker support: not removed by the cell-type rule",
+  p_spared <- mk_ct(dplyr::filter(ct, status == "no support (kept by this rule)"),
+                    "M2 calls an excluded type but no marker or cluster-majority support: not removed by the cell-type rule",
                     "These cells may still be removed by another filter. Label: % of that sample's cells in the genotype.")
 
   # fine M2 types (all 30 plae types) ----------------------------------------
-  ct_pages <- list()
+  ct_pages <- list(); bar_pages <- list()
   ct_csv <- sub("\\.csv$", "_celltypes.csv", out_csv)
   if ("celltype_m2" %in% names(d)) {
     group_order <- c("cone", "pr_precursor", "rpc", "neurogenic", "other_retinal", "rod", "bipolar",
@@ -123,8 +122,8 @@ plot_filtering_impact <- function(filter_meta,
       dplyr::mutate(role = droplevels(role))
     fine <- dd |>
       dplyr::group_by(sample_id, role, celltype_m2, celltype_m2_group) |>
-      dplyr::summarise(n_all = dplyr::n(), n_kept = sum(fate == "kept"),
-                       n_removed_celltype_m2 = sum(fate == "celltype_m2"),
+      dplyr::summarise(n_all = dplyr::n(), n_kept = sum(fate %in% "kept"),
+                       n_removed_celltype_m2 = sum(fate %in% "celltype_m2"),
                        n_removed_other = sum(!fate %in% c("kept", "celltype_m2")), .groups = "drop")
     readr::write_csv(fine, ct_csv)
     type_tab <- dplyr::distinct(fine, celltype_m2, celltype_m2_group) |>
@@ -150,13 +149,41 @@ plot_filtering_impact <- function(filter_meta,
         ggplot2::scale_fill_gradient(low = "#e8f1fb", high = "#d62728", trans = "sqrt",
                                      limits = c(0, 100), name = "% of sample's\ncells in genotype") +
         ggplot2::labs(x = NULL, y = NULL, title = title,
-                      subtitle = "M2 call (plae, 30 types) per cell; text = cells. * = type the cell-type rule can exclude (needs marker support).") +
+                      subtitle = "M2 call (plae, 30 types) per cell; text = cells. * = type the cell-type rule can exclude (needs marker or cluster-majority support).") +
         ggplot2::theme_minimal(base_size = 8) +
         ggplot2::theme(axis.text.x = ggplot2::element_text(angle = 60, hjust = 1),
                        strip.text.x = ggplot2::element_text(angle = 90, hjust = 0, size = 6),
                        strip.text.y = ggplot2::element_text(face = "bold"),
                        panel.grid = ggplot2::element_blank(), panel.spacing = grid::unit(1, "pt"))
     }
+    pal <- celltype_m2_palette()
+    bar_lab <- stats::setNames(type_tab$lab, type_tab$celltype_m2)
+    bar_cols <- stats::setNames(pal[type_tab$celltype_m2], type_tab$lab)
+    bar_cols[is.na(bar_cols)] <- "grey50"
+    mk_bar <- function(col, title) {
+      b <- fine |>
+        dplyr::mutate(n = .data[[col]]) |>
+        dplyr::group_by(sample_id, role) |>
+        dplyr::mutate(pct = if (sum(n) > 0) 100 * n / sum(n) else 0) |>
+        dplyr::ungroup() |>
+        dplyr::filter(n > 0) |>
+        dplyr::mutate(type = factor(bar_lab[celltype_m2], levels = rev(type_tab$lab)),
+                      sample_id = factor(sample_id, levels = rev(ord)))
+      ggplot2::ggplot(b, ggplot2::aes(x = pct, y = sample_id, fill = type)) +
+        ggplot2::geom_col(width = 0.85) +
+        ggplot2::facet_wrap(~role, nrow = 1) +
+        ggplot2::scale_fill_manual(values = bar_cols, breaks = type_tab$lab, drop = FALSE) +
+        ggplot2::guides(fill = ggplot2::guide_legend(ncol = 1)) +
+        ggplot2::labs(x = "% of the sample's cells in that genotype", y = NULL, fill = "M2 type",
+                      title = title,
+                      subtitle = "All 30 plae M2 types, in lineage order. * = type the cell-type rule can exclude.") +
+        ggplot2::theme_minimal(base_size = 9) +
+        ggplot2::theme(legend.position = "right", legend.text = ggplot2::element_text(size = 6),
+                       legend.key.size = grid::unit(8, "pt"),
+                       panel.grid.major.y = ggplot2::element_blank())
+    }
+    bar_pages <- list(mk_bar("n_all", "M2 cell type of every genotyped cell (before filtering)"),
+                      mk_bar("n_kept", "M2 cell type of kept cells (after filtering)"))
     ct_pages <- list(mk_heat("n_all", "M2 cell type of every genotyped cell (before filtering)"),
                      mk_heat("n_kept", "M2 cell type of kept cells (what remains in the filtered objects)"))
   }
@@ -165,7 +192,9 @@ plot_filtering_impact <- function(filter_meta,
   h <- max(5, 0.18 * length(ord) + 2)
   grDevices::pdf(out_pdf, width = 13, height = h)
   on.exit(if (grDevices::dev.cur() > 1) grDevices::dev.off(), add = TRUE)
-  print(p_n); print(p_pct); print(p_rm); print(p_spared)
+  print(p_n); print(p_pct)
+  for (p in bar_pages) print(p)
+  print(p_rm); print(p_spared)
   if (length(ct_pages)) {
     grDevices::dev.off()
     tmp <- tempfile(fileext = ".pdf")
@@ -184,8 +213,7 @@ plot_filtering_impact <- function(filter_meta,
 #'
 #' Replaces the unlabelled `plot_filtering_timeline()` bars. Steps follow the precedence in
 #' `annotate_filter_reason()` (each cell is counted under the first filter that removes it):
-#' removed clusters, no numbat genotype, QC, MALAT1 cluster, manual list, cell type
-#' (M2 call + marker support). One panel per genotype (tumor / diploid / no genotype), each
+#' no numbat genotype, QC, manual list, cell type (M2 call + marker or cluster-majority support). One panel per genotype (tumor / diploid / no genotype), each
 #' with its own y axis; the label above each bar gives the cells that step removed.
 #'
 #' @param filter_meta List or data.frame of per-cell metadata with `sample_id`,
@@ -201,9 +229,8 @@ plot_filtering_steps <- function(filter_meta,
   miss <- setdiff(c("sample_id", "filter_reason", "GT_opt"), names(filter_meta))
   if (length(miss)) stop("plot_filtering_steps: filter metadata lacks ", paste(miss, collapse = ", "))
 
-  steps <- c(cluster_remove = "removed\nclusters", clone_opt_na = "no numbat\ngenotype",
-             qc_fail = "QC", malat1 = "MALAT1\ncluster", manual_exclude = "manual\nlist",
-             celltype_m2 = "cell type\n(M2+markers)")
+  steps <- c(clone_opt_na = "no numbat\ngenotype", qc_fail = "QC", manual_exclude = "manual\nlist",
+             celltype_m2 = "cell type\n(M2+support)")
   step_lab <- paste0("- ", steps)
   x_levels <- c("all", step_lab, "kept")
   role_cols <- c(tumor = "#1f77b4", diploid = "#2ca02c", `no genotype` = "grey60")
