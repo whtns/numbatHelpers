@@ -662,13 +662,24 @@ plot_effect_of_filtering <- function(unfiltered_seu_path, filtered_seu_path = NU
       levels = c("tumor", "diploid", "no_numbat"))
     excl <- if ("celltype_exclude" %in% colnames(md)) md$celltype_exclude %in% TRUE else rep(FALSE, nrow(md))
     in_group <- md$celltype_m2_group %in% celltype_m2_excluded_groups()
+    # excluded cells split by support source (#54, 2026-11-18); objects without
+    # celltype_support fall back to one "excluded (call + support)" level
+    sup <- if ("celltype_support" %in% colnames(md)) md$celltype_support else rep(NA_character_, nrow(md))
+    excl_lab <- dplyr::case_when(sup %in% "marker" ~ "excluded: own markers",
+                                 sup %in% "cluster_majority" ~ "excluded: cluster majority",
+                                 sup %in% "cluster_markers" ~ "excluded: cluster markers",
+                                 TRUE ~ "excluded (call + support)")
+    excl_levels <- c("excluded: own markers", "excluded: cluster majority",
+                     "excluded: cluster markers", "excluded (call + support)")
     unfiltered_seu@meta.data$celltype_outcome <- factor(
-      dplyr::case_when(excl ~ "excluded (call + support)",
+      dplyr::case_when(excl ~ excl_lab,
                        in_group ~ "excluded type, no support",
                        TRUE ~ "photoreceptor lineage / other"),
-      levels = c("excluded (call + support)", "excluded type, no support",
-                 "photoreceptor lineage / other"))
-    outcome_cols <- c("excluded (call + support)" = "#d62728",
+      levels = c(excl_levels, "excluded type, no support", "photoreceptor lineage / other"))
+    outcome_cols <- c("excluded: own markers" = "#d62728",
+                      "excluded: cluster majority" = "#1f77b4",
+                      "excluded: cluster markers" = "#9467bd",
+                      "excluded (call + support)" = "#d62728",
                       "excluded type, no support" = "#ff9f1c",
                       "photoreceptor lineage / other" = "grey85")
     n_excl <- table(unfiltered_seu@meta.data$role_label[excl])
@@ -720,7 +731,7 @@ plot_effect_of_filtering <- function(unfiltered_seu_path, filtered_seu_path = NU
                 cols = c(tumor = "#1f77b4", diploid = "#2ca02c", no_numbat = "grey70")) +
           labs(title = "numbat genotype") + leg,
         DimPlot(unfiltered_seu, group.by = "celltype_outcome", cols = outcome_cols, pt.size = 0.5,
-                order = c("excluded (call + support)", "excluded type, no support")) +
+                order = c(excl_levels, "excluded type, no support")) +
           labs(title = "cell-type exclusion",
                subtitle = paste0("excluded: ", paste(names(n_excl), n_excl, sep = " ", collapse = ", "))) + leg,
         ncol = 2) + patchwork::plot_annotation(title = sample_id)

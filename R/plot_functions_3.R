@@ -55,7 +55,7 @@ annotate_filter_reason <- function(
   # Whole-cluster removal (rod/APOE/low_qual/MALAT1 cluster labels) and the MALAT1-cluster step
   # were dropped on 2026-11-17 (#54): they removed ~24k tumor cells that pass per-cell QC. Rods
   # and non-photoreceptor cells are now removed per cell by the cell-type rule below, which
-  # takes cluster-majority support (annotate_celltype_m2()). `abbreviation` stays as a label.
+  # takes cluster-majority or cluster-marker support (annotate_celltype_m2()). `abbreviation` stays as a label.
 
   manual_remove <- if (length(cells_to_drop) > 0) {
     rownames(meta) %in% cells_to_drop
@@ -487,7 +487,7 @@ extract_filter_metadata <- function(
       cluster_remove_flag, is_malat1, in_manual_exclude, celltype_m2_flag,
       scna,
       dplyr::any_of(c("filter_keep", "filter_reason", "GT_opt", "p_cnv",
-                      "celltype_m2", "celltype_m2_group", "celltype_exclude"))
+                      "celltype_m2", "celltype_m2_group", "celltype_exclude", "celltype_support"))
     )
 }
 

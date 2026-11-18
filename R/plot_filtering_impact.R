@@ -3,7 +3,7 @@
 #' Reads the per-cell tibbles from `extract_filter_metadata()` (the
 #' `filter_inspection_metadata` target) and plots, per sample, how many cells each filter
 #' removes from tumor, diploid and un-genotyped cells, with a page on the per-cell cell-type
-#' exclusion (M2 call + marker-panel or cluster-majority support).
+#' exclusion (M2 call + marker-panel, cluster-majority or cluster-marker support).
 #'
 #' @param filter_meta List (or data.frame) of per-sample tibbles from `extract_filter_metadata()`.
 #' @param out_pdf Output PDF.
@@ -122,11 +122,33 @@ plot_filtering_impact <- function(filter_meta,
                      legend.key.size = grid::unit(8, "pt"))
   }
   p_rm <- mk_ct(dplyr::filter(ct, status == "removed (call + support)"),
-                "Cells removed by the cell-type rule (M2 call + marker panel or >=60% of its cluster)",
+                "Cells removed by the cell-type rule (M2 call + own marker panel, cluster majority or cluster markers)",
                 paste0(tot_txt, ". Label: % of that sample's cells in the genotype.\n",
                        "Coloured by M2 type; only types in the excluded groups (* on the bar pages) can be removed by this rule."))
+  # which support source removed each cell (#54, 2026-11-18)
+  if (!"celltype_support" %in% names(d)) d$celltype_support <- NA_character_
+  src_levels <- c("marker", "cluster_majority", "cluster_markers")
+  src <- d |>
+    dplyr::filter(fate == "celltype_m2") |>
+    dplyr::mutate(support = factor(dplyr::coalesce(celltype_support, "unrecorded"),
+                                   levels = c(src_levels, "unrecorded"))) |>
+    dplyr::count(sample_id, role, support, name = "n") |>
+    dplyr::mutate(sample_id = factor(sample_id, levels = rev(ord)))
+  src_tot <- dplyr::count(src, support, wt = n)
+  p_src <- ggplot2::ggplot(src, ggplot2::aes(x = n, y = sample_id, fill = support)) +
+    ggplot2::geom_col(width = 0.8) +
+    ggplot2::facet_wrap(~role, nrow = 1, scales = "free_x", drop = FALSE) +
+    ggplot2::scale_fill_manual(values = c(marker = "#d62728", cluster_majority = "#1f77b4",
+                                          cluster_markers = "#ff7f0e", unrecorded = "grey60"),
+                               drop = FALSE) +
+    ggplot2::labs(x = "cells", y = NULL, fill = "support",
+                  title = "Cells removed by the cell-type rule, by support source",
+                  subtitle = paste0("marker = the cell's own panel; cluster_majority = >=60% of its res-0.2 cluster in its group; ",
+                                    "cluster_markers = >=20% of its cluster panel-positive (res 0.2/0.4/0.6, >=20 cells).\nTotals: ",
+                                    paste(src_tot$support, src_tot$n, sep = " ", collapse = ", "))) +
+    base_theme
   p_spared <- mk_ct(dplyr::filter(ct, status == "no support (kept by this rule)"),
-                    "M2 calls an excluded type but no marker or cluster-majority support: not removed by the cell-type rule",
+                    "M2 calls an excluded type but no marker, cluster-majority or cluster-marker support: not removed by the cell-type rule",
                     "These cells may still be removed by another filter. Label: % of that sample's cells in the genotype.")
 
   # fine M2 types (all 30 plae types) ----------------------------------------
@@ -166,7 +188,7 @@ plot_filtering_impact <- function(filter_meta,
         ggplot2::scale_fill_gradient(low = "#e8f1fb", high = "#d62728", trans = "sqrt",
                                      limits = c(0, 100), name = "% of sample's\ncells in genotype") +
         ggplot2::labs(x = NULL, y = NULL, title = title,
-                      subtitle = "M2 call (plae, 30 types) per cell; text = cells. * = type the cell-type rule can exclude (needs marker or cluster-majority support).") +
+                      subtitle = "M2 call (plae, 30 types) per cell; text = cells. * = type the cell-type rule can exclude (needs marker, cluster-majority or cluster-marker support).") +
         ggplot2::theme_minimal(base_size = 8) +
         ggplot2::theme(axis.text.x = ggplot2::element_text(angle = 60, hjust = 1),
                        strip.text.x = ggplot2::element_text(angle = 90, hjust = 0, size = 6),
@@ -211,7 +233,7 @@ plot_filtering_impact <- function(filter_meta,
   on.exit(if (grDevices::dev.cur() > 1) grDevices::dev.off(), add = TRUE)
   print(p_n); print(p_pct)
   for (p in bar_pages) print(p)
-  print(p_rm); print(p_spared)
+  print(p_rm); print(p_src); print(p_spared)
   if (length(ct_pages)) {
     grDevices::dev.off()
     tmp <- tempfile(fileext = ".pdf")
@@ -230,7 +252,7 @@ plot_filtering_impact <- function(filter_meta,
 #'
 #' Replaces the unlabelled `plot_filtering_timeline()` bars. Steps follow the precedence in
 #' `annotate_filter_reason()` (each cell is counted under the first filter that removes it):
-#' no numbat genotype, QC, manual list, cell type (M2 call + marker or cluster-majority support). One panel per genotype (tumor / diploid / no genotype), each
+#' no numbat genotype, QC, manual list, cell type (M2 call + marker, cluster-majority or cluster-marker support). One panel per genotype (tumor / diploid / no genotype), each
 #' with its own y axis; the label above each bar gives the cells that step removed.
 #'
 #' @param filter_meta List or data.frame of per-cell metadata with `sample_id`,
