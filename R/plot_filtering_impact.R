@@ -2,7 +2,7 @@
 #'
 #' Reads the per-cell tibbles from `extract_filter_metadata()` (the
 #' `filter_inspection_metadata` target) and plots, per sample, how many cells each filter
-#' removes from tumor, diploid and un-genotyped cells, with a page on the per-cell cell-type
+#' removes from aneuploid, diploid and un-genotyped cells, with a page on the per-cell cell-type
 #' exclusion (M2 call + marker-panel, cluster-majority or cluster-marker support).
 #'
 #' @param filter_meta List (or data.frame) of per-sample tibbles from `extract_filter_metadata()`.
@@ -24,11 +24,11 @@ plot_filtering_impact <- function(filter_meta,
   if (!"celltype_exclude" %in% names(filter_meta)) filter_meta$celltype_exclude <- FALSE
 
   fate_levels <- c("kept", "clone_opt_na", "qc_fail", "manual_exclude", "celltype_m2")
-  role_levels <- c("tumor", "diploid", "no_numbat")
+  role_levels <- c("aneuploid", "diploid", "no_numbat")
   d <- filter_meta |>
     dplyr::mutate(
       role = factor(dplyr::case_when(is.na(GT_opt) ~ "no_numbat", GT_opt == "" ~ "diploid",
-                                     TRUE ~ "tumor"), levels = role_levels),
+                                     TRUE ~ "aneuploid"), levels = role_levels),
       fate = factor(tidyr::replace_na(as.character(filter_reason), "kept"), levels = fate_levels),
       excl_group = celltype_m2_group %in% celltype_m2_excluded_groups(),
       celltype_exclude = celltype_exclude %in% TRUE)
@@ -44,8 +44,8 @@ plot_filtering_impact <- function(filter_meta,
   fate_cols <- c(kept = "grey80", clone_opt_na = "#8c564b", qc_fail = "#ff7f0e",
                  celltype_m2 = "#d62728",
                  manual_exclude = "#17becf")
-  # order samples by tumor-cell count
-  ord <- d |> dplyr::filter(role == "tumor") |> dplyr::count(sample_id) |>
+  # order samples by aneuploid-cell count
+  ord <- d |> dplyr::filter(role == "aneuploid") |> dplyr::count(sample_id) |>
     dplyr::arrange(dplyr::desc(n)) |> dplyr::pull(sample_id)
   ord <- c(ord, setdiff(unique(d$sample_id), ord))
   counts$sample_id <- factor(counts$sample_id, levels = rev(ord))
@@ -89,8 +89,8 @@ plot_filtering_impact <- function(filter_meta,
   tot <- d |> dplyr::filter(fate == "celltype_m2") |> dplyr::count(role)
   tot_txt <- paste0("Removed as celltype_m2: ",
                     paste(tot$role, tot$n, sep = " ", collapse = ", "),
-                    " (tumor ", round(100 * sum(tot$n[tot$role == "tumor"]) /
-                                        max(1, sum(d$role == "tumor")), 2), "% of all tumor cells)")
+                    " (aneuploid ", round(100 * sum(tot$n[tot$role == "aneuploid"]) /
+                                        max(1, sum(d$role == "aneuploid")), 2), "% of all aneuploid cells)")
 
   group_cols <- c(rod = "#1f77b4", bipolar = "#17becf", rbc = "#d62728", microglia = "#2ca02c",
                   other_immune = "#98df8a", other_nonretinal = "#9467bd", rpe = "#8c564b")
@@ -159,7 +159,7 @@ plot_filtering_impact <- function(filter_meta,
   if ("celltype_m2" %in% names(d)) {
     group_order <- c("cone", "pr_precursor", "rpc", "neurogenic", "other_retinal", "rod", "bipolar",
                      "rbc", "microglia", "other_immune", "other_nonretinal", "rpe")
-    dd <- d |> dplyr::filter(role %in% c("tumor", "diploid"), !is.na(celltype_m2)) |>
+    dd <- d |> dplyr::filter(role %in% c("aneuploid", "diploid"), !is.na(celltype_m2)) |>
       dplyr::mutate(role = droplevels(role))
     fine <- dd |>
       dplyr::group_by(sample_id, role, celltype_m2, celltype_m2_group) |>
@@ -254,7 +254,7 @@ plot_filtering_impact <- function(filter_meta,
 #'
 #' Replaces the unlabelled `plot_filtering_timeline()` bars. Steps follow the precedence in
 #' `annotate_filter_reason()` (each cell is counted under the first filter that removes it):
-#' no numbat genotype, QC, manual list, cell type (M2 call + marker, cluster-majority or cluster-marker support). One panel per genotype (tumor / diploid / no genotype), each
+#' no numbat genotype, QC, manual list, cell type (M2 call + marker, cluster-majority or cluster-marker support). One panel per genotype (aneuploid / diploid / no genotype), each
 #' with its own y axis; the label above each bar gives the cells that step removed.
 #'
 #' @param filter_meta List or data.frame of per-cell metadata with `sample_id`,
@@ -274,13 +274,13 @@ plot_filtering_steps <- function(filter_meta,
              celltype_m2 = "cell type\n(M2+support)")
   step_lab <- paste0("- ", steps)
   x_levels <- c("all", step_lab, "kept")
-  role_cols <- c(tumor = "#1f77b4", diploid = "#2ca02c", `no genotype` = "grey60")
+  role_cols <- c(aneuploid = "#1f77b4", diploid = "#2ca02c", `no genotype` = "grey60")
 
   d <- filter_meta |>
     dplyr::transmute(
       sample_id,
       role = factor(dplyr::case_when(is.na(GT_opt) ~ "no genotype", GT_opt == "" ~ "diploid",
-                                     TRUE ~ "tumor"), levels = names(role_cols)),
+                                     TRUE ~ "aneuploid"), levels = names(role_cols)),
       reason = as.character(filter_reason))
 
   one_sample <- function(ds, sid) {

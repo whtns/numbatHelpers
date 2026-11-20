@@ -658,8 +658,8 @@ plot_effect_of_filtering <- function(unfiltered_seu_path, filtered_seu_path = NU
   if ("celltype_m2_group" %in% colnames(unfiltered_seu@meta.data)) {
     md <- unfiltered_seu@meta.data
     unfiltered_seu@meta.data$role_label <- factor(
-      dplyr::case_when(is.na(md$GT_opt) ~ "no_numbat", md$GT_opt == "" ~ "diploid", TRUE ~ "tumor"),
-      levels = c("tumor", "diploid", "no_numbat"))
+      dplyr::case_when(is.na(md$GT_opt) ~ "no_numbat", md$GT_opt == "" ~ "diploid", TRUE ~ "aneuploid"),
+      levels = c("aneuploid", "diploid", "no_numbat"))
     excl <- if ("celltype_exclude" %in% colnames(md)) md$celltype_exclude %in% TRUE else rep(FALSE, nrow(md))
     in_group <- md$celltype_m2_group %in% celltype_m2_excluded_groups()
     # excluded cells split by support source (#54, 2026-11-18); objects without
@@ -731,7 +731,7 @@ plot_effect_of_filtering <- function(unfiltered_seu_path, filtered_seu_path = NU
                 order = rev(setdiff(np_lvls, "photoreceptor lineage / RPC / neurogenic"))) +
           labs(title = "non-photoreceptor M2 calls (cells)") + leg,
         DimPlot(unfiltered_seu, group.by = "role_label", pt.size = 0.3,
-                cols = c(tumor = "#1f77b4", diploid = "#2ca02c", no_numbat = "grey70")) +
+                cols = c(aneuploid = "#1f77b4", diploid = "#2ca02c", no_numbat = "grey70")) +
           labs(title = "numbat genotype") + leg,
         DimPlot(unfiltered_seu, group.by = "celltype_outcome", cols = outcome_cols, pt.size = 0.5,
                 order = c(excl_levels, "excluded type, no support")) +
