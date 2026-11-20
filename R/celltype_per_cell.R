@@ -7,7 +7,9 @@
 #      confident tumor cells ("M5"), OR that group makes up >= 60% of the cell's
 #      gene_snn_res.0.2 cluster (2026-11-17; replaces whole-cluster removal), OR at least 20% of
 #      its cluster (>= 20 cells) at any of gene_snn_res.0.2/0.4/0.6 is positive for that
-#      group's panels (cluster-marker support, 2026-11-18; docs/celltype_support_sim.md).
+#      group's panels (cluster-marker support, 2026-11-18; docs/celltype_support_sim.md), OR
+#      numbat calls the cell confidently diploid (p_cnv < 0.1; genotype support, 2026-11-19):
+#      a non-tumor transcriptome and no tumor SCNAs agree. CNV+ cells never get this support.
 # M2 alone is not enough: on tumor cells its RBC / microglia calls are near-ties carried by
 # housekeeping and ribosomal genes, with no marker expression (docs/tumor_celltype_label_audit.md).
 # Ported from src/audit_composite_diploid.R (label_group, cor_call, log_pb, per_cell_call, M5)
@@ -136,8 +138,9 @@ celltype_marker_support <- function(seu, calib, q = 0.99, n_bins = 5L, assay = "
 #' [celltype_m2_excluded_groups()] AND (one of its panels ([celltype_group_panels()]) is positive
 #' OR the group makes up at least `majority` of the cell's `cluster` OR at least
 #' `cluster_panel_rate` of the cell's cluster in any of `marker_clusters` (clusters of at least
-#' `min_cluster_size` cells) is positive for the group's panels). `celltype_support` records the
-#' first source that applies: marker, cluster_majority, cluster_markers or none.
+#' `min_cluster_size` cells) is positive for the group's panels OR `p_cnv` < `diploid_p`).
+#' `celltype_support` records the first source that applies: marker, cluster_majority,
+#' cluster_markers, diploid_genotype or none.
 #'
 #' @param seu Seurat object.
 #' @param calib Optional logical vector over cells (confident tumor cells) for marker calibration.
@@ -152,6 +155,9 @@ celltype_marker_support <- function(seu, calib, q = 0.99, n_bins = 5L, assay = "
 #'   columns are skipped.
 #' @param cluster_panel_rate Minimum share of a cluster positive for the group's panels.
 #' @param min_cluster_size Minimum cluster size for cluster-marker support.
+#' @param p_cnv Optional numeric vector over cells (numbat posterior of being tumor); NULL or NA:
+#'   no genotype support.
+#' @param diploid_p A cell with `p_cnv` below this counts as confidently diploid.
 #' @return `seu` with metadata `celltype_m2`, `celltype_m2_r`, `celltype_m2_margin`,
 #'   `celltype_m2_group`, `celltype_m2_cluster_share`, `celltype_m2_cluster_panel_rate`,
 #'   `celltype_pos_<panel>`, `celltype_support` and `celltype_exclude`.
@@ -161,7 +167,8 @@ annotate_celltype_m2 <- function(seu, calib = NULL,
                                  assay = "gene", genes = NULL, chunk = 2000L,
                                  cluster = "gene_snn_res.0.2", majority = 0.6,
                                  marker_clusters = c("gene_snn_res.0.2", "gene_snn_res.0.4", "gene_snn_res.0.6"),
-                                 cluster_panel_rate = 0.2, min_cluster_size = 20L) {
+                                 cluster_panel_rate = 0.2, min_cluster_size = 20L,
+                                 p_cnv = NULL, diploid_p = 0.1) {
   ln <- .lognorm_counts(seu, assay)
   calls <- celltype_m2_calls(seu, ref_path = ref_path, assay = assay, genes = genes, chunk = chunk, lognorm = ln)
   # Share of the cell's cluster that carries the cell's M2 group (NA without a cluster column).
@@ -219,11 +226,19 @@ annotate_celltype_m2 <- function(seu, calib = NULL,
     }
     calls$celltype_m2_cluster_panel_rate <- best_rate
     rate_ok <- in_excl & !is.na(best_rate) & best_rate >= cluster_panel_rate
+    # Genotype support (#54, 2026-11-19): confidently diploid by numbat.
+    geno_ok <- rep(FALSE, nrow(calls))
+    if (!is.null(p_cnv)) {
+      stopifnot(length(p_cnv) == ncol(seu))
+      pc <- p_cnv[match(rownames(calls), colnames(seu))]
+      geno_ok <- in_excl & !is.na(pc) & pc < diploid_p
+    }
     calls$celltype_support <- ifelse(!in_excl, NA_character_,
                               ifelse(supported, "marker",
                               ifelse(majority_ok, "cluster_majority",
-                              ifelse(rate_ok, "cluster_markers", "none"))))
-    calls$celltype_exclude <- supported | majority_ok | rate_ok
+                              ifelse(rate_ok, "cluster_markers",
+                              ifelse(geno_ok, "diploid_genotype", "none")))))
+    calls$celltype_exclude <- supported | majority_ok | rate_ok | geno_ok
     calls <- cbind(calls, pos)
   }
   Seurat::AddMetaData(seu, calls)

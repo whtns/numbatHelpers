@@ -122,12 +122,12 @@ plot_filtering_impact <- function(filter_meta,
                      legend.key.size = grid::unit(8, "pt"))
   }
   p_rm <- mk_ct(dplyr::filter(ct, status == "removed (call + support)"),
-                "Cells removed by the cell-type rule (M2 call + own marker panel, cluster majority or cluster markers)",
+                "Cells removed by the cell-type rule (M2 call + own marker panel, cluster majority, cluster markers or diploid genotype)",
                 paste0(tot_txt, ". Label: % of that sample's cells in the genotype.\n",
                        "Coloured by M2 type; only types in the excluded groups (* on the bar pages) can be removed by this rule."))
   # which support source removed each cell (#54, 2026-11-18)
   if (!"celltype_support" %in% names(d)) d$celltype_support <- NA_character_
-  src_levels <- c("marker", "cluster_majority", "cluster_markers")
+  src_levels <- c("marker", "cluster_majority", "cluster_markers", "diploid_genotype")
   src <- d |>
     dplyr::filter(fate == "celltype_m2") |>
     dplyr::mutate(support = factor(dplyr::coalesce(celltype_support, "unrecorded"),
@@ -139,12 +139,14 @@ plot_filtering_impact <- function(filter_meta,
     ggplot2::geom_col(width = 0.8) +
     ggplot2::facet_wrap(~role, nrow = 1, scales = "free_x", drop = FALSE) +
     ggplot2::scale_fill_manual(values = c(marker = "#d62728", cluster_majority = "#1f77b4",
-                                          cluster_markers = "#ff7f0e", unrecorded = "grey60"),
+                                          cluster_markers = "#ff7f0e", diploid_genotype = "#2ca02c",
+                                          unrecorded = "grey60"),
                                drop = FALSE) +
     ggplot2::labs(x = "cells", y = NULL, fill = "support",
                   title = "Cells removed by the cell-type rule, by support source",
                   subtitle = paste0("marker = the cell's own panel; cluster_majority = >=60% of its res-0.2 cluster in its group; ",
-                                    "cluster_markers = >=20% of its cluster panel-positive (res 0.2/0.4/0.6, >=20 cells).\nTotals: ",
+                                    "cluster_markers = >=20% of its cluster panel-positive (res 0.2/0.4/0.6, >=20 cells);\n",
+                                    "diploid_genotype = numbat p_cnv < 0.1. Totals: ",
                                     paste(src_tot$support, src_tot$n, sep = " ", collapse = ", "))) +
     base_theme
   p_spared <- mk_ct(dplyr::filter(ct, status == "no support (kept by this rule)"),

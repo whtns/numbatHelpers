@@ -668,9 +668,11 @@ plot_effect_of_filtering <- function(unfiltered_seu_path, filtered_seu_path = NU
     excl_lab <- dplyr::case_when(sup %in% "marker" ~ "excluded: own markers",
                                  sup %in% "cluster_majority" ~ "excluded: cluster majority",
                                  sup %in% "cluster_markers" ~ "excluded: cluster markers",
+                                 sup %in% "diploid_genotype" ~ "excluded: diploid genotype",
                                  TRUE ~ "excluded (call + support)")
     excl_levels <- c("excluded: own markers", "excluded: cluster majority",
-                     "excluded: cluster markers", "excluded (call + support)")
+                     "excluded: cluster markers", "excluded: diploid genotype",
+                     "excluded (call + support)")
     unfiltered_seu@meta.data$celltype_outcome <- factor(
       dplyr::case_when(excl ~ excl_lab,
                        in_group ~ "excluded type, no support",
@@ -679,6 +681,7 @@ plot_effect_of_filtering <- function(unfiltered_seu_path, filtered_seu_path = NU
     outcome_cols <- c("excluded: own markers" = "#d62728",
                       "excluded: cluster majority" = "#1f77b4",
                       "excluded: cluster markers" = "#9467bd",
+                      "excluded: diploid genotype" = "#2ca02c",
                       "excluded (call + support)" = "#d62728",
                       "excluded type, no support" = "#ff9f1c",
                       "photoreceptor lineage / other" = "grey85")
