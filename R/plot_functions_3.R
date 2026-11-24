@@ -444,13 +444,16 @@ extract_filter_metadata <- function(
 ) {
   if (is.na(seu_path)) return(NA)
   sample_id <- stringr::str_extract(seu_path, "SR[RX][0-9]+")
+  if (is.na(sample_id)) warning("extract_filter_metadata: no SRR/SRX id in path ", seu_path)
   seu <- readRDS(seu_path)
 
+  # .env: some objects carry their own sample_id column (SRX10264520-522 hold the run
+  # accessions SRR13884243-245, NA for 24 cells), which data masking would keep (#56).
   meta <- seu@meta.data |>
     tibble::rownames_to_column("cell") |>
     tibble::as_tibble() |>
     dplyr::mutate(
-      sample_id      = sample_id,
+      sample_id      = .env$sample_id,
       clone_opt_is_na = is.na(clone_opt),
       cluster        = as.numeric(as.character(gene_snn_res.0.2))
     )
