@@ -21,6 +21,13 @@ plot_filtering_impact <- function(filter_meta,
   miss <- setdiff(need, names(filter_meta))
   if (length(miss)) stop("plot_filtering_impact: filter metadata lacks ", paste(miss, collapse = ", "))
   if (!"celltype_m2_group" %in% names(filter_meta)) filter_meta$celltype_m2_group <- NA_character_
+  # Regroup from the fine call so every sample uses the current grouping: objects annotated
+  # before the Muller split carry "other_nonretinal" for Muller glia, newer ones "muller",
+  # and the mix duplicated factor levels below (#58).
+  if ("celltype_m2" %in% names(filter_meta)) {
+    has_call <- !is.na(filter_meta$celltype_m2)
+    filter_meta$celltype_m2_group[has_call] <- celltype_group(filter_meta$celltype_m2[has_call])
+  }
   if (!"celltype_exclude" %in% names(filter_meta)) filter_meta$celltype_exclude <- FALSE
 
   fate_levels <- c("kept", "clone_opt_na", "qc_fail", "manual_exclude", "celltype_m2")
@@ -93,7 +100,7 @@ plot_filtering_impact <- function(filter_meta,
                                         max(1, sum(d$role == "aneuploid")), 2), "% of all aneuploid cells)")
 
   group_cols <- c(rod = "#1f77b4", bipolar = "#17becf", rbc = "#d62728", microglia = "#2ca02c",
-                  other_immune = "#98df8a", other_nonretinal = "#9467bd", rpe = "#8c564b")
+                  other_immune = "#98df8a", other_nonretinal = "#9467bd", muller = "#e377c2", rpe = "#8c564b")
   # every fine M2 type in the excluded groups, ordered by group, coloured like the bar pages
   ct_types <- dplyr::distinct(ct, celltype_m2_group, ct_type) |>
     dplyr::mutate(g = factor(celltype_m2_group, levels = celltype_m2_excluded_groups())) |>
@@ -158,7 +165,7 @@ plot_filtering_impact <- function(filter_meta,
   ct_csv <- sub("\\.csv$", "_celltypes.csv", out_csv)
   if ("celltype_m2" %in% names(d)) {
     group_order <- c("cone", "pr_precursor", "rpc", "neurogenic", "other_retinal", "rod", "bipolar",
-                     "rbc", "microglia", "other_immune", "other_nonretinal", "rpe")
+                     "rbc", "microglia", "other_immune", "other_nonretinal", "muller", "rpe")
     dd <- d |> dplyr::filter(role %in% c("aneuploid", "diploid"), !is.na(celltype_m2)) |>
       dplyr::mutate(role = droplevels(role))
     fine <- dd |>

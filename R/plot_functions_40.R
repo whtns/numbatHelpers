@@ -695,7 +695,7 @@ plot_effect_of_filtering <- function(unfiltered_seu_path, filtered_seu_path = NU
     grp <- celltype_group(fine)
     lvl_order <- unique(fine_lab[order(factor(grp, levels = c(
       "cone", "pr_precursor", "rpc", "neurogenic", "other_retinal", "rod", "bipolar", "rbc",
-      "microglia", "other_immune", "other_nonretinal", "rpe")), fine_lab)])
+      "microglia", "other_immune", "other_nonretinal", "muller", "rpe")), fine_lab)])
     lvl_order <- c(setdiff(lvl_order, c("other (<0.2%)", "no call")),
                    intersect(c("other (<0.2%)", "no call"), lvl_order))
     unfiltered_seu@meta.data$celltype_m2_fine <- factor(fine_lab, levels = lvl_order)
@@ -704,7 +704,7 @@ plot_effect_of_filtering <- function(unfiltered_seu_path, filtered_seu_path = NU
 
     # non-photoreceptor types, each named (ganglion, amacrine, horizontal, Muller, astrocyte, ...)
     np_groups <- c("other_retinal", "bipolar", "rbc", "microglia", "other_immune",
-                   "other_nonretinal", "rpe", "rod")
+                   "other_nonretinal", "muller", "rpe", "rod")
     np <- ifelse(grp %in% np_groups, fine, "photoreceptor lineage / RPC / neurogenic")
     np_n <- table(np)
     np_lab <- ifelse(np == "photoreceptor lineage / RPC / neurogenic", np,

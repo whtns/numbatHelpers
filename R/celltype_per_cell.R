@@ -18,7 +18,8 @@
 #' Harmonise cell-type names onto shared groups
 #'
 #' Maps plae / Sridhar / clustifyr vocabularies onto: cone, pr_precursor, rod, bipolar, rbc,
-#' microglia, other_immune, other_nonretinal, rpe, neurogenic, rpc, other_retinal.
+#' microglia, other_immune, other_nonretinal, muller, rpe, neurogenic, rpc, other_retinal.
+#' Muller glia have their own group (#58, 2026-11-23); astrocytes stay in other_nonretinal.
 #' @param x Character vector of cell-type names.
 #' @return Character vector of group names (NA where x is NA).
 #' @export
@@ -32,8 +33,9 @@ celltype_group <- function(x) {
   out[grepl("red blood", y)] <- "rbc"
   out[grepl("microglia", y)] <- "microglia"
   out[grepl("macrophage|monocyte|t-cell|t/nk|b-cell|natural killer|mast", y)] <- "other_immune"
-  out[grepl("endothelial|vein|blood vessel|pericyte|fibroblast|schwann|melanocyte|oligodendro|astrocyte|muller", y)] <-
+  out[grepl("endothelial|vein|blood vessel|pericyte|fibroblast|schwann|melanocyte|oligodendro|astrocyte", y)] <-
     "other_nonretinal"
+  out[grepl("m.{1,2}ller", y)] <- "muller"   # Muller, Müller, Mueller
   out[grepl("^rpe", y)] <- "rpe"
   out[grepl("neurogenic", y)] <- "neurogenic"
   out[grepl("rpc", y) & !grepl("rpe", y)] <- "rpc"
@@ -48,14 +50,16 @@ celltype_group <- function(x) {
 #' @return Character vector of groups.
 #' @export
 celltype_m2_excluded_groups <- function() {
-  c("rod", "bipolar", "rbc", "microglia", "other_immune", "other_nonretinal", "rpe")
+  c("rod", "bipolar", "rbc", "microglia", "other_immune", "other_nonretinal", "muller", "rpe")
 }
 
 #' Marker panels used to confirm an excluded call
 #'
 #' Panels from src/audit_composite_diploid.R (rod, rbc, microglia, bipolar) and
-#' src/audit_diploid_identity_v2.R (glia, vascular, stromal, rpe), plus an immune panel that
-#' covers lymphoid cells.
+#' src/audit_diploid_identity_v2.R (vascular, stromal, rpe), plus an immune panel that
+#' covers lymphoid cells. The old `glia` panel (RLBP1, GLUL, SLC1A3, GFAP, CLU) was split on
+#' 2026-11-23 (#58): GLUL and CLU are expressed by tumor cells, so it was not specific.
+#' `muller` counts GLUL only in cells that also express RLBP1 (see [celltype_panel_conditional()]).
 #' @return Named list of gene vectors.
 #' @export
 celltype_marker_panels <- function() {
@@ -65,7 +69,8 @@ celltype_marker_panels <- function() {
     rbc       = c("HBB", "HBA1", "HBA2", "HBG1", "HBG2", "HBD"),
     microglia = c("PTPRC", "C1QA", "C1QB", "TYROBP", "CX3CR1", "P2RY12", "AIF1"),
     immune    = c("PTPRC", "CD74", "HLA-DRA", "CD3E", "NKG7", "CD68"),
-    glia      = c("RLBP1", "GLUL", "SLC1A3", "GFAP", "CLU"),
+    muller    = c("RLBP1", "SLC1A3", "CRYM", "GLUL"),
+    astrocyte = c("GFAP", "PAX2", "S100B", "AQP4"),
     vascular  = c("PECAM1", "VWF", "CLDN5"),
     stromal   = c("COL1A2", "COL3A1", "DCN"),
     rpe       = c("RPE65", "BEST1", "PMEL"))
@@ -77,8 +82,20 @@ celltype_marker_panels <- function() {
 celltype_group_panels <- function() {
   list(rod = "rod", bipolar = "bipolar", rbc = "rbc", microglia = "microglia",
        other_immune = c("immune", "microglia"),
-       other_nonretinal = c("glia", "vascular", "stromal"),
+       other_nonretinal = c("astrocyte", "vascular", "stromal"),
+       muller = "muller",
        rpe = "rpe")
+}
+
+#' Panel genes that count only together with another gene
+#'
+#' panel -> c(gene = required_gene): the gene's expression is set to 0 in cells where the
+#' required gene is not detected before the panel score is taken. GLUL is broadly expressed by
+#' tumor cells, so it supports a Muller call only alongside RLBP1 (#58).
+#' @return Named list of named character vectors.
+#' @export
+celltype_panel_conditional <- function() {
+  list(muller = c(GLUL = "RLBP1"))
 }
 
 # log1p(CP10k) of an assay's counts (JoinLayers first for Assay5).
@@ -121,7 +138,14 @@ celltype_marker_support <- function(seu, calib, q = 0.99, n_bins = 5L, assay = "
     pmin(pmax(findInterval(lu, brks, all.inside = TRUE), 1L), length(brks) - 1L)
   for (p in names(panels)) {
     g <- intersect(panels[[p]], rownames(m))
-    sc <- if (length(g)) Matrix::colMeans(m[g, , drop = FALSE]) else rep(0, ncol(m))
+    mg <- m[g, , drop = FALSE]
+    cond <- celltype_panel_conditional()[[p]]
+    for (cg in intersect(names(cond), g)) {
+      req <- cond[[cg]]
+      has_req <- if (req %in% rownames(m)) as.numeric(m[req, ] > 0) else rep(0, ncol(m))
+      mg[cg, ] <- mg[cg, ] * has_req
+    }
+    sc <- if (length(g)) Matrix::colMeans(mg) else rep(0, ncol(m))
     thr <- tapply(sc[calib], bin[calib], stats::quantile, probs = q, na.rm = TRUE)
     t_cell <- thr[as.character(bin)]
     t_cell[is.na(t_cell)] <- max(thr, na.rm = TRUE)   # a bin with no calibration cells
