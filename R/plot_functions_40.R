@@ -185,6 +185,19 @@ plot_effect_of_filtering <- function(unfiltered_seu_path, filtered_seu_path = NU
 
   vec_split_label_line <- Vectorize(split_label_line)
 
+  # Rasterize every UMAP's points (2026-11-25): vector points made 15-20 MB pages that were
+  # slow to write and to open. Axes, labels and legends stay vector. Seurat's own raster = TRUE
+  # goes through scattermore, which reads pt.size as pixels (pt.size 0.3 is invisible), so the
+  # vector plot is drawn as usual and only its point layer is rasterized with ggrastr.
+  # Seurat wraps even a single plot in patchwork, so ask for the bare ggplots (combine = FALSE).
+  rasterise_points <- function(plots) {
+    plots <- lapply(plots, function(p) tryCatch(ggrastr::rasterise(p, layers = "Point", dpi = 300),
+                                                error = function(e) { warning("rasterise: ", conditionMessage(e)); p }))
+    if (length(plots) == 1L) plots[[1]] else patchwork::wrap_plots(plots)
+  }
+  DimPlot <- function(...) rasterise_points(Seurat::DimPlot(..., raster = FALSE, combine = FALSE))
+  FeaturePlot <- function(...) rasterise_points(Seurat::FeaturePlot(..., raster = FALSE, combine = FALSE))
+
   sample_id <- str_extract(unfiltered_seu_path, "SR[RX][0-9]+")
 
   if (is.null(plot_path)) {
@@ -669,10 +682,11 @@ plot_effect_of_filtering <- function(unfiltered_seu_path, filtered_seu_path = NU
                                  sup %in% "cluster_majority" ~ "excluded: cluster majority",
                                  sup %in% "cluster_markers" ~ "excluded: cluster markers",
                                  sup %in% "diploid_genotype" ~ "excluded: diploid genotype",
+                                 sup %in% "neighborhood" ~ "excluded: neighborhood",
                                  TRUE ~ "excluded (call + support)")
     excl_levels <- c("excluded: own markers", "excluded: cluster majority",
                      "excluded: cluster markers", "excluded: diploid genotype",
-                     "excluded (call + support)")
+                     "excluded: neighborhood", "excluded (call + support)")
     unfiltered_seu@meta.data$celltype_outcome <- factor(
       dplyr::case_when(excl ~ excl_lab,
                        in_group ~ "excluded type, no support",
@@ -682,6 +696,7 @@ plot_effect_of_filtering <- function(unfiltered_seu_path, filtered_seu_path = NU
                       "excluded: cluster majority" = "#1f77b4",
                       "excluded: cluster markers" = "#9467bd",
                       "excluded: diploid genotype" = "#2ca02c",
+                      "excluded: neighborhood" = "#8c564b",
                       "excluded (call + support)" = "#d62728",
                       "excluded type, no support" = "#ff9f1c",
                       "photoreceptor lineage / other" = "grey85")
@@ -745,6 +760,59 @@ plot_effect_of_filtering <- function(unfiltered_seu_path, filtered_seu_path = NU
       FALSE
     })
     if (ct_ok) plot_list["celltype_umaps"] <- tmp_path
+
+    # what the filter drops (2026-11-25): the cell-type rule next to every drop reason and the
+    # kept cells, on the same unfiltered UMAP. filter_reason records only the first reason
+    # (clone_opt_na > qc_fail > manual > celltype), so cell-type cells caught earlier get their
+    # own "cell type + ..." levels instead of disappearing from the cell-type count.
+    if (all(c("filter_reason", "filter_keep") %in% colnames(md))) {
+      fr <- as.character(md$filter_reason)
+      drop_lab <- dplyr::case_when(
+        is.na(fr) ~ "kept",
+        excl & fr == "qc_fail" ~ "cell type + QC fail",
+        excl & fr == "clone_opt_na" ~ "cell type + no genotype",
+        fr == "qc_fail" ~ "QC fail",
+        fr == "clone_opt_na" ~ "no genotype",
+        fr == "manual_exclude" ~ "manual",
+        fr == "celltype_m2" ~ "cell type",
+        TRUE ~ fr)
+      drop_lvls <- c("cell type", "cell type + QC fail", "cell type + no genotype",
+                     "QC fail", "no genotype", "manual", "kept")
+      drop_cols <- c("cell type" = "#d62728", "cell type + QC fail" = "#ff7f0e",
+                     "cell type + no genotype" = "#e377c2", "QC fail" = "#1f77b4",
+                     "no genotype" = "#17becf", "manual" = "#8c564b", "kept" = "grey85")
+      unfiltered_seu@meta.data$drop_label <- factor(drop_lab, levels = drop_lvls)
+      n_drop <- table(factor(drop_lab[drop_lab != "kept"], levels = setdiff(drop_lvls, "kept")))
+      n_drop <- n_drop[n_drop > 0]
+      keep <- md$filter_keep %in% TRUE
+
+      emb <- Seurat::Embeddings(unfiltered_seu, "umap")
+      lims <- ggplot2::coord_cartesian(xlim = range(emb[, 1]), ylim = range(emb[, 2]))
+      cl_lab <- stringr::str_sort(unique(as.character(md[[group.by]])), numeric = TRUE)
+      cl_cols <- scales::hue_pal()(length(cl_lab)) |> set_names(cl_lab)
+
+      tmp_path <- tempfile(fileext = ".pdf")
+      dc_ok <- tryCatch({
+        p_dc <- patchwork::wrap_plots(
+          DimPlot(unfiltered_seu, group.by = "celltype_outcome", cols = outcome_cols, pt.size = 0.9,
+                  order = c(excl_levels, "excluded type, no support")) +
+            labs(title = "cell-type rule", subtitle = paste0("excluded ", sum(excl))) + lims + leg,
+          DimPlot(unfiltered_seu, group.by = "drop_label", cols = drop_cols, pt.size = 0.9,
+                  order = rev(setdiff(drop_lvls, "kept"))) +
+            labs(title = "all drops (filter_reason)",
+                 subtitle = paste0("dropped ", sum(!keep), "\n", stringr::str_wrap(
+                                   paste(names(n_drop), n_drop, sep = " ", collapse = ", "), 50))) + lims + leg,
+          DimPlot(unfiltered_seu[, keep], group.by = group.by, cols = cl_cols, pt.size = 0.3) +
+            labs(title = "filtered (kept cells)", subtitle = paste0("kept ", sum(keep))) + lims + leg,
+          ncol = 3) + patchwork::plot_annotation(title = paste0(sample_id, " - what the filter drops"))
+        ggsave(tmp_path, p_dc, height = 6, width = 18)
+        TRUE
+      }, error = function(e) {
+        warning("drops_compare failed: ", conditionMessage(e))
+        FALSE
+      })
+      if (dc_ok) plot_list["drops_compare"] <- tmp_path
+    }
   }
 
   # dimplot grids ------------------------------
@@ -935,9 +1003,9 @@ plot_effect_of_filtering <- function(unfiltered_seu_path, filtered_seu_path = NU
   if (!is.null(hm_high_hypoxia)) plot_list["marker_heatmap_high_hypoxia"] <- hm_high_hypoxia
 
   # The cell-type page leads the report (user request, 2026-11-16).
-  if ("celltype_umaps" %in% names(plot_list)) {
-    plot_list <- plot_list[c("celltype_umaps", setdiff(names(plot_list), "celltype_umaps"))]
-  }
+  # The drops comparison page follows it (2026-11-25).
+  lead <- intersect(c("celltype_umaps", "drops_compare"), names(plot_list))
+  plot_list <- plot_list[c(lead, setdiff(names(plot_list), lead))]
 
   # Filter to only valid, non-empty PDF files before combining
   valid_pdfs <- Filter(function(f) !is.null(f) && file.exists(f) && file.size(f) > 100L,
