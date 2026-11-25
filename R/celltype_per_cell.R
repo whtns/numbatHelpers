@@ -10,6 +10,10 @@
 #      group's panels (cluster-marker support, 2026-11-18; docs/celltype_support_sim.md), OR
 #      numbat calls the cell confidently diploid (p_cnv < 0.1; genotype support, 2026-11-19):
 #      a non-tumor transcriptome and no tumor SCNAs agree. CNV+ cells never get this support.
+# Neighborhood support (2026-11-24): a cell whose own M2 call is NOT an excluded group is still
+# excluded when >= `neighbor_share` of its k nearest neighbors in PCA space are first-pass
+# excluded cells of one group (e.g. a cone-called cell inside a rod island). One pass only (the
+# new exclusions do not seed further), and never for CNV+ cells (GT_opt set or p_cnv > 0.5).
 # M2 alone is not enough: on tumor cells its RBC / microglia calls are near-ties carried by
 # housekeeping and ribosomal genes, with no marker expression (docs/tumor_celltype_label_audit.md).
 # Ported from src/audit_composite_diploid.R (label_group, cor_call, log_pb, per_cell_call, M5)
@@ -166,6 +170,13 @@ celltype_marker_support <- function(seu, calib, q = 0.99, n_bins = 5L, assay = "
 #' `celltype_support` records the first source that applies: marker, cluster_majority,
 #' cluster_markers, diploid_genotype or none.
 #'
+#' Neighborhood support: a cell that is not excluded by the rule above (any M2 call) is also
+#' excluded when at least `neighbor_share` of its `neighbor_k` nearest neighbors in `reduction`
+#' space are excluded cells of one group, unless it is CNV+ (`is_tumor` TRUE or
+#' `p_cnv` > `neighbor_tumor_p`). Single pass: these cells do not seed further exclusions.
+#' `celltype_support` is "neighborhood" for them; `celltype_neighbor_group` /
+#' `celltype_neighbor_share` record the dominant excluded group among every cell's neighbors.
+#'
 #' @param seu Seurat object.
 #' @param calib Optional logical vector over cells (confident tumor cells) for marker calibration.
 #'   NULL: no marker columns and `celltype_exclude` is FALSE everywhere.
@@ -182,9 +193,17 @@ celltype_marker_support <- function(seu, calib, q = 0.99, n_bins = 5L, assay = "
 #' @param p_cnv Optional numeric vector over cells (numbat posterior of being tumor); NULL or NA:
 #'   no genotype support.
 #' @param diploid_p A cell with `p_cnv` below this counts as confidently diploid.
+#' @param is_tumor Optional logical vector over cells (numbat genotype present); TRUE cells never
+#'   get neighborhood support.
+#' @param neighbor_k Neighbors per cell for neighborhood support.
+#' @param neighbor_share Minimum share of neighbors that are excluded cells of one group; NULL
+#'   turns neighborhood support off.
+#' @param neighbor_tumor_p Cells with `p_cnv` above this never get neighborhood support.
+#' @param reduction,dims Embedding used for the neighbors (missing reduction: support skipped).
 #' @return `seu` with metadata `celltype_m2`, `celltype_m2_r`, `celltype_m2_margin`,
 #'   `celltype_m2_group`, `celltype_m2_cluster_share`, `celltype_m2_cluster_panel_rate`,
-#'   `celltype_pos_<panel>`, `celltype_support` and `celltype_exclude`.
+#'   `celltype_pos_<panel>`, `celltype_neighbor_group`, `celltype_neighbor_share`,
+#'   `celltype_support` and `celltype_exclude`.
 #' @export
 annotate_celltype_m2 <- function(seu, calib = NULL,
                                  ref_path = "/project2/cobrinik_1090/Homo_sapiens/numbat/plae_ref.rds",
@@ -192,7 +211,9 @@ annotate_celltype_m2 <- function(seu, calib = NULL,
                                  cluster = "gene_snn_res.0.2", majority = 0.6,
                                  marker_clusters = c("gene_snn_res.0.2", "gene_snn_res.0.4", "gene_snn_res.0.6"),
                                  cluster_panel_rate = 0.2, min_cluster_size = 20L,
-                                 p_cnv = NULL, diploid_p = 0.1) {
+                                 p_cnv = NULL, diploid_p = 0.1,
+                                 is_tumor = NULL, neighbor_k = 20L, neighbor_share = 0.5,
+                                 neighbor_tumor_p = 0.5, reduction = "pca", dims = 1:30) {
   ln <- .lognorm_counts(seu, assay)
   calls <- celltype_m2_calls(seu, ref_path = ref_path, assay = assay, genes = genes, chunk = chunk, lognorm = ln)
   # Share of the cell's cluster that carries the cell's M2 group (NA without a cluster column).
@@ -263,6 +284,33 @@ annotate_celltype_m2 <- function(seu, calib = NULL,
                               ifelse(rate_ok, "cluster_markers",
                               ifelse(geno_ok, "diploid_genotype", "none")))))
     calls$celltype_exclude <- supported | majority_ok | rate_ok | geno_ok
+    # Neighborhood support (2026-11-24): cells sitting among first-pass excluded cells.
+    calls$celltype_neighbor_group <- NA_character_
+    calls$celltype_neighbor_share <- NA_real_
+    if (!is.null(neighbor_share)) {
+      if (reduction %in% names(seu@reductions)) {
+        emb <- SeuratObject::Embeddings(seu, reduction)
+        emb <- emb[rownames(calls), intersect(dims, seq_len(ncol(emb))), drop = FALSE]
+        seed_group <- ifelse(calls$celltype_exclude, calls$celltype_m2_group, NA_character_)
+        nb <- celltype_neighbor_support(emb, seed_group, k = neighbor_k)
+        calls$celltype_neighbor_group <- nb$group
+        calls$celltype_neighbor_share <- nb$share
+        cnv_pos <- rep(FALSE, nrow(calls))
+        if (!is.null(is_tumor)) {
+          stopifnot(length(is_tumor) == ncol(seu))
+          cnv_pos <- cnv_pos | is_tumor[match(rownames(calls), colnames(seu))] %in% TRUE
+        }
+        if (!is.null(p_cnv)) {
+          pc <- p_cnv[match(rownames(calls), colnames(seu))]
+          cnv_pos <- cnv_pos | (!is.na(pc) & pc > neighbor_tumor_p)
+        }
+        neigh_ok <- !calls$celltype_exclude & !cnv_pos & !is.na(nb$share) & nb$share >= neighbor_share
+        calls$celltype_support[neigh_ok] <- "neighborhood"
+        calls$celltype_exclude <- calls$celltype_exclude | neigh_ok
+      } else {
+        message("annotate_celltype_m2: reduction '", reduction, "' missing; no neighborhood support")
+      }
+    }
     calls <- cbind(calls, pos)
   }
   Seurat::AddMetaData(seu, calls)
@@ -318,7 +366,42 @@ celltype_m2_calls <- function(seu,
 celltype_meta_cols <- function() {
   c("celltype_m2", "celltype_m2_r", "celltype_m2_margin", "celltype_m2_group", "celltype_exclude",
     "celltype_m2_cluster_share", "celltype_m2_cluster_panel_rate", "celltype_support",
+    "celltype_neighbor_group", "celltype_neighbor_share",
     paste0("celltype_pos_", names(celltype_marker_panels())))
+}
+
+#' Dominant excluded group among each cell's nearest neighbors
+#'
+#' @param emb Numeric matrix, cells x dimensions (rownames = cells).
+#' @param seed_group Character vector over the rows of `emb`: the group of each excluded (seed)
+#'   cell, NA for cells that are not excluded.
+#' @param k Neighbors per cell (self excluded); capped at `nrow(emb) - 1`.
+#' @return data.frame with `group` (most frequent seed group among the neighbors; NA when no
+#'   neighbor is a seed) and `share` (its share of the k neighbors), rownames = cells.
+#' @export
+celltype_neighbor_support <- function(emb, seed_group, k = 20L) {
+  stopifnot(length(seed_group) == nrow(emb))
+  n <- nrow(emb)
+  out <- data.frame(group = rep(NA_character_, n), share = rep(NA_real_, n), row.names = rownames(emb))
+  k <- min(as.integer(k), n - 1L)
+  groups <- sort(unique(stats::na.omit(seed_group)))
+  if (k < 1L || !length(groups)) return(out)
+  if (is.null(rownames(emb))) rownames(emb) <- paste0("c", seq_len(n))
+  nn <- Seurat::FindNeighbors(emb, k.param = k + 1L, return.neighbor = TRUE,
+                              compute.SNN = FALSE, verbose = FALSE)
+  idx <- SeuratObject::Indices(nn); storage.mode(idx) <- "integer"
+  # Drop self (usually, but not always, the first column) and keep k neighbors.
+  idx <- t(vapply(seq_len(n), function(i) {
+    v <- idx[i, ]; v <- v[v != i]; v[seq_len(k)]
+  }, integer(k)))
+  ng <- matrix(seed_group[idx], nrow = n)
+  counts <- vapply(groups, function(g) rowSums(ng == g, na.rm = TRUE), numeric(n))
+  counts <- matrix(counts, nrow = n, dimnames = list(NULL, groups))
+  best <- max.col(counts, ties.method = "first")
+  top <- counts[cbind(seq_len(n), best)]
+  out$group <- ifelse(top > 0, groups[best], NA_character_)
+  out$share <- top / k
+  out
 }
 
 #' Fixed, high-contrast colours for the plae 30-type M2 calls

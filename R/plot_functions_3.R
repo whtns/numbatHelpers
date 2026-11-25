@@ -308,7 +308,8 @@ prep_unfiltered_seu <- function(numbat_rds_file, cluster_dictionary, large_clone
   calib <- qc_ok & is_tumor & if ("p_cnv" %in% colnames(md)) (!is.na(md$p_cnv) & md$p_cnv > 0.9) else TRUE
   if (sum(calib, na.rm = TRUE) < 50) calib <- qc_ok & is_tumor
   seu <- annotate_celltype_m2(seu, calib = calib %in% TRUE,
-                              p_cnv = if ("p_cnv" %in% colnames(md)) md$p_cnv else NULL)
+                              p_cnv = if ("p_cnv" %in% colnames(md)) md$p_cnv else NULL,
+                              is_tumor = is_tumor)
   message("celltype exclusion for ", sample_id, ": ", sum(seu$celltype_exclude), " of ", ncol(seu),
           " cells (", sum(calib %in% TRUE), " calibration cells)")
 
