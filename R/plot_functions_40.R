@@ -791,9 +791,30 @@ plot_effect_of_filtering <- function(unfiltered_seu_path, filtered_seu_path = NU
       cl_lab <- stringr::str_sort(unique(as.character(md[[group.by]])), numeric = TRUE)
       cl_cols <- scales::hue_pal()(length(cl_lab)) |> set_names(cl_lab)
 
+      # row 2 (2026-11-25): the re-clustered filtered object on its own UMAP, by cluster and by
+      # clone, as in the "re-clustered" column of the scna / cluster page.
+      recl <- list()
+      if (!is.null(original_filtered_seu)) {
+        rmd <- original_filtered_seu@meta.data
+        if (group.by %in% colnames(rmd)) {
+          r_lab <- stringr::str_sort(unique(as.character(rmd[[group.by]])), numeric = TRUE)
+          recl[[1]] <- DimPlot(original_filtered_seu, group.by = group.by, pt.size = 0.3,
+                               cols = scales::hue_pal()(length(r_lab)) |> set_names(r_lab)) +
+            labs(title = "re-clustered: clusters", subtitle = paste0(ncol(original_filtered_seu), " cells")) + leg
+        }
+        if ("scna" %in% colnames(rmd)) {
+          tmp_seu <- original_filtered_seu
+          tmp_seu@meta.data$scna_lab <- vec_split_label_line(tmp_seu@meta.data$scna, 3)
+          recl[[length(recl) + 1]] <- DimPlot(tmp_seu, group.by = "scna_lab", pt.size = 0.3) +
+            labs(title = "re-clustered: clones") + leg
+          rm(tmp_seu)
+        }
+      }
+      n_rows <- if (length(recl)) 2L else 1L
+
       tmp_path <- tempfile(fileext = ".pdf")
       dc_ok <- tryCatch({
-        p_dc <- patchwork::wrap_plots(
+        row1 <- list(
           DimPlot(unfiltered_seu, group.by = "celltype_outcome", cols = outcome_cols, pt.size = 0.9,
                   order = c(excl_levels, "excluded type, no support")) +
             labs(title = "cell-type rule", subtitle = paste0("excluded ", sum(excl))) + lims + leg,
@@ -803,9 +824,11 @@ plot_effect_of_filtering <- function(unfiltered_seu_path, filtered_seu_path = NU
                  subtitle = paste0("dropped ", sum(!keep), "\n", stringr::str_wrap(
                                    paste(names(n_drop), n_drop, sep = " ", collapse = ", "), 50))) + lims + leg,
           DimPlot(unfiltered_seu[, keep], group.by = group.by, cols = cl_cols, pt.size = 0.3) +
-            labs(title = "filtered (kept cells)", subtitle = paste0("kept ", sum(keep))) + lims + leg,
-          ncol = 3) + patchwork::plot_annotation(title = paste0(sample_id, " - what the filter drops"))
-        ggsave(tmp_path, p_dc, height = 6, width = 18)
+            labs(title = "filtered (kept cells)", subtitle = paste0("kept ", sum(keep))) + lims + leg)
+        row2 <- if (length(recl)) c(recl, rep(list(patchwork::plot_spacer()), 3L - length(recl))) else list()
+        p_dc <- patchwork::wrap_plots(c(row1, row2), ncol = 3) +
+          patchwork::plot_annotation(title = paste0(sample_id, " - what the filter drops"))
+        ggsave(tmp_path, p_dc, height = 6 * n_rows, width = 18)
         TRUE
       }, error = function(e) {
         warning("drops_compare failed: ", conditionMessage(e))
