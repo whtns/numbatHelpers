@@ -216,7 +216,8 @@ plot_effect_of_filtering <- function(unfiltered_seu_path, filtered_seu_path = NU
     unique_gts <- unique(gt_vals[!is.na(gt_vals) & gt_vals != ""])
     if (length(unique_gts) == 0) {
       result <- gt_vals
-      result[is.na(gt_vals) | gt_vals == ""] <- "diploid"
+      result[!is.na(gt_vals) & gt_vals == ""] <- "diploid"
+      result[is.na(gt_vals)] <- "no genotype"
       return(result)
     }
     seg_sets <- setNames(
@@ -249,7 +250,11 @@ plot_effect_of_filtering <- function(unfiltered_seu_path, filtered_seu_path = NU
     }
     result <- gt_vals
     for (gt in sorted_gts) result[!is.na(result) & result == gt] <- display[gt]
-    result[is.na(gt_vals) | (!is.na(gt_vals) & gt_vals == "")] <- "diploid"
+    # GT_opt "" is numbat's diploid clone; NA means the cell is absent from clone_post (no
+    # genotype). Ungenotyped cells are kept by the filter since 2026-11-25, so they get their
+    # own label instead of being folded into "diploid".
+    result[!is.na(gt_vals) & gt_vals == ""] <- "diploid"
+    result[is.na(gt_vals)] <- "no genotype"
     result
   }
 
@@ -802,13 +807,27 @@ plot_effect_of_filtering <- function(unfiltered_seu_path, filtered_seu_path = NU
                                cols = scales::hue_pal()(length(r_lab)) |> set_names(r_lab)) +
             labs(title = "re-clustered: clusters", subtitle = paste0(ncol(original_filtered_seu), " cells")) + leg
         }
+        tmp_seu <- original_filtered_seu
         if ("scna" %in% colnames(rmd)) {
-          tmp_seu <- original_filtered_seu
           tmp_seu@meta.data$scna_lab <- vec_split_label_line(tmp_seu@meta.data$scna, 3)
-          recl[[length(recl) + 1]] <- DimPlot(tmp_seu, group.by = "scna_lab", pt.size = 0.3) +
-            labs(title = "re-clustered: clones") + leg
-          rm(tmp_seu)
+          s_lab <- sort(unique(stats::na.omit(tmp_seu@meta.data$scna_lab)))
+          s_main <- setdiff(s_lab, "no genotype")
+          s_cols <- c(scales::hue_pal()(length(s_main)), if ("no genotype" %in% s_lab) "grey75") |>
+            set_names(c(s_main, intersect("no genotype", s_lab)))
+          recl[[length(recl) + 1]] <- DimPlot(tmp_seu, group.by = "scna_lab", cols = s_cols, pt.size = 0.3,
+                                              order = s_main) +
+            labs(title = "re-clustered: clones",
+                 subtitle = paste0("no genotype ", sum(tmp_seu@meta.data$scna_lab %in% "no genotype"))) + leg
         }
+        # M2 cell type (page-1 labels and colours), matched to the unfiltered object by cell name
+        ct <- unfiltered_seu@meta.data$celltype_m2_fine[match(colnames(tmp_seu), colnames(unfiltered_seu))]
+        if (any(!is.na(ct))) {
+          tmp_seu@meta.data$celltype_m2_fine <- factor(as.character(ct), levels = levels(ct))
+          recl[[length(recl) + 1]] <- DimPlot(tmp_seu, group.by = "celltype_m2_fine", cols = fine_cols,
+                                              pt.size = 0.3) +
+            labs(title = "re-clustered: M2 cell type") + leg
+        }
+        rm(tmp_seu)
       }
       n_rows <- if (length(recl)) 2L else 1L
 

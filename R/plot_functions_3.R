@@ -24,7 +24,8 @@ annotate_filter_reason <- function(
   cells_to_remove = NULL,
   mito_threshold = 10,
   nCount_threshold = 1000,
-  nFeature_threshold = 1000
+  nFeature_threshold = 1000,
+  keep_ungenotyped = TRUE
 ) {
   if (is.null(cluster_dictionary[[sample_id]])) {
     stop("cluster_dictionary has no entry for ", sample_id, "; cannot annotate filter reasons")
@@ -41,7 +42,12 @@ annotate_filter_reason <- function(
   meta <- seu@meta.data
   has_clone_col <- "clone_opt" %in% colnames(meta)
 
-  clone_missing <- if (has_clone_col) {
+  # Cells without a numbat genotype (absent from clone_post) are kept since 2026-11-25
+  # (keep_ungenotyped = TRUE): they still go through QC and the cell-type rule, and clone-based
+  # analyses drop them on their own (is.na(clone_opt) / scna NA).
+  clone_missing <- if (keep_ungenotyped) {
+    rep(FALSE, nrow(meta))
+  } else if (has_clone_col) {
     is.na(meta$clone_opt)
   } else {
     rep(TRUE, nrow(meta))
@@ -520,14 +526,17 @@ apply_filter_criteria <- function(
   include_cluster_removal = FALSE,  # no longer part of the filter (#54, 2026-11-17)
   include_malat1_removal  = FALSE,
   include_manual_removal  = TRUE,
-  include_celltype_removal = TRUE
+  include_celltype_removal = TRUE,
+  include_clone_na_removal = FALSE  # ungenotyped cells are kept since 2026-11-25
 ) {
   n_total <- nrow(filter_meta)
   if (!"celltype_m2_flag" %in% names(filter_meta)) filter_meta$celltype_m2_flag <- FALSE
   stage_cells <- list()
 
-  stage_cells[["clone_na"]] <- filter_meta |>
-    dplyr::filter(!clone_opt_is_na)
+  stage_cells[["clone_na"]] <- filter_meta
+  if (include_clone_na_removal) {
+    stage_cells[["clone_na"]] <- dplyr::filter(stage_cells[["clone_na"]], !clone_opt_is_na)
+  }
 
   stage_cells[["qc"]] <- stage_cells[["clone_na"]] |>
     dplyr::filter(
